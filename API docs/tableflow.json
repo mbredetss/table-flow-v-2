@@ -1,0 +1,306 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "TableFlow API",
+    "version": "1.0.0",
+    "description": "API for TableFlow — a food ordering and payment application that lets customers browse menus, place orders, and pay from their phone, eliminating physical queues at food establishments."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3000",
+      "description": "Local development server"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Menu",
+      "description": "Public menu browsing — no authentication required. Customers can view categories, browse items, and inspect item details immediately after scanning a QR code."
+    }
+  ],
+  "paths": {
+    "/menu/categories": {
+      "get": {
+        "summary": "List menu categories",
+        "description": "Returns all active menu categories ordered for display. Used to render the category navigation so the customer can browse the menu organized by categories (e.g., Food, Drinks, Desserts) as described in the user journey. Response envelope assumed; verify against implementation.",
+        "operationId": "getMenuCategories",
+        "tags": ["Menu"],
+        "responses": {
+          "200": {
+            "description": "Array of menu categories returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/MenuCategory"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/menu/items": {
+      "get": {
+        "summary": "List menu items",
+        "description": "Returns menu items, optionally filtered by category. Each item includes name, photo, description, price, category name, and availability flag. Items with is_available=false are included but flagged as sold out so the UI can display them without removing them. Data is fetched fresh on every request (no caching) to ensure the customer always sees the latest prices and availability. Supports the acceptance criteria: 'each item shows name, photo, description, and price' and 'menu reflects the latest data without stale/cached values'. Response envelope assumed; verify against implementation.",
+        "operationId": "getMenuItems",
+        "tags": ["Menu"],
+        "parameters": [
+          {
+            "name": "category_id",
+            "in": "query",
+            "required": false,
+            "description": "Filter items by category. Must be a valid UUID referencing an existing menu_categories.id. If omitted, items from all categories are returned.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Array of menu items returned successfully. Returns an empty array when no items exist, enabling the frontend to show an empty-state message.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/MenuItem"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid category_id — the provided value is not a valid UUID or does not reference an existing category.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/menu/items/{id}": {
+      "get": {
+        "summary": "Get menu item detail",
+        "description": "Returns the full detail of a single menu item including photo, description, price, category, variants/add-ons, and availability. Used when the customer taps an item to view its detail view with full information, fulfilling the acceptance criteria: 'tapping an item opens its detail view with full information'. Response envelope assumed; verify against implementation.",
+        "operationId": "getMenuItemById",
+        "tags": ["Menu"],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "UUID of the menu item to retrieve. Must reference an existing menu_items.id.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Full menu item detail returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/MenuItemDetail"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Menu item with the given id does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "MenuCategory": {
+        "type": "object",
+        "required": ["id", "name", "created_at"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Primary key of the category."
+          },
+          "name": {
+            "type": "string",
+            "description": "Category name (e.g., Food, Drinks, Desserts)."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Creation timestamp."
+          }
+        }
+      },
+      "MenuItem": {
+        "type": "object",
+        "required": ["id", "category_id", "name", "description", "photo", "price", "is_available", "category", "created_at", "updated_at"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Primary key of the menu item."
+          },
+          "category_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Foreign key referencing menu_categories.id."
+          },
+          "name": {
+            "type": "string",
+            "description": "Item name."
+          },
+          "description": {
+            "type": "string",
+            "description": "Item description."
+          },
+          "photo": {
+            "type": "string",
+            "format": "uri",
+            "description": "Photo URL or file path."
+          },
+          "price": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Price in smallest currency unit (cents)."
+          },
+          "is_available": {
+            "type": "boolean",
+            "description": "Availability flag. false = sold out (item is still returned in the list so the UI can show it as unavailable)."
+          },
+          "category": {
+            "type": "string",
+            "description": "Category name, joined from menu_categories for display convenience."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Creation timestamp."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Last update timestamp."
+          }
+        }
+      },
+      "MenuItemDetail": {
+        "type": "object",
+        "required": ["id", "category_id", "name", "description", "photo", "price", "is_available", "category", "created_at", "updated_at"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Primary key of the menu item."
+          },
+          "category_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Foreign key referencing menu_categories.id."
+          },
+          "name": {
+            "type": "string",
+            "description": "Item name."
+          },
+          "description": {
+            "type": "string",
+            "description": "Item description."
+          },
+          "photo": {
+            "type": "string",
+            "format": "uri",
+            "description": "Photo URL or file path."
+          },
+          "price": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Price in smallest currency unit (cents)."
+          },
+          "is_available": {
+            "type": "boolean",
+            "description": "Availability flag. false = sold out."
+          },
+          "category": {
+            "type": "string",
+            "description": "Category name, joined from menu_categories."
+          },
+          "variants": {
+            "type": "array",
+            "items": {},
+            "description": "Structure not yet defined in schema — TBD. Mentioned in TDD as 'variants/add-ons' returned in item detail."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Creation timestamp."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Last update timestamp."
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "required": ["status", "message"],
+        "properties": {
+          "status": {
+            "type": "string",
+            "example": "fail"
+          },
+          "message": {
+            "type": "string",
+            "description": "Human-readable error description."
+          }
+        }
+      }
+    }
+  }
+}
