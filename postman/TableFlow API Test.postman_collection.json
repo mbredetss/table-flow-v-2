@@ -1,0 +1,498 @@
+{
+  "info": {
+    "_postman_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "name": "TableFlow API Test",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "0"
+  },
+  "item": [
+    {
+      "name": "Browse Menu",
+      "item": [
+        {
+          "name": "[No test] Prerequisite",
+          "item": [
+            {
+              "name": "[Note] Seed test data into the database manually before running",
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "exec": [""],
+                    "type": "text/javascript"
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [""],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "http://localhost:{{port}}/",
+                  "protocol": "http",
+                  "host": ["localhost"],
+                  "port": "{{port}}",
+                  "path": [""]
+                }
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "GET /menu/categories → 200, returns array of { id, name }",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [""],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('it should response 200 status code', () => {\r",
+                  "    pm.expect(pm.response).to.have.status(200);\r",
+                  "});\r",
+                  "\r",
+                  "pm.test('response Content-Type header should have application/json value', () => {\r",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.includes('application/json');\r",
+                  "});\r",
+                  "\r",
+                  "pm.test('response body should an object', () => {\r",
+                  "    const responseJson = pm.response.json();\r",
+                  "    pm.expect(responseJson).to.be.an('object');\r",
+                  "});\r",
+                  "\r",
+                  "pm.test('response body should have correct property and value', () => {\r",
+                  "    const responseJson = pm.response.json();\r",
+                  "    pm.expect(responseJson.status).to.equal('success');\r",
+                  "    pm.expect(responseJson.data).to.be.an('array');\r",
+                  "    responseJson.data.forEach((category) => {\r",
+                  "        pm.expect(category.id).to.be.ok;\r",
+                  "        pm.expect(category.name).to.be.ok;\r",
+                  "    });\r",
+                  "});\r",
+                  ""
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:{{port}}/menu/categories",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "{{port}}",
+              "path": ["menu", "categories"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "GET /menu/items → 200, each item has name, photo, description, price, category, is_available",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [""],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('it should response 200 status code', () => {\r",
+                  "    pm.expect(pm.response).to.have.status(200);\r",
+                  "});\r",
+                  "\r",
+                  "pm.test('response Content-Type header should have application/json value', () => {\r",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.includes('application/json');\r",
+                  "});\r",
+                  "\r",
+                  "pm.test('response body should an object', () => {\r",
+                  "    const responseJson = pm.response.json();\r",
+                  "    pm.expect(responseJson).to.be.an('object');\r",
+                  "});\r",
+                  "\r",
+                  "pm.test('response body should have correct property and value', () => {\r",
+                  "    const responseJson = pm.response.json();\r",
+                  "    pm.expect(responseJson.status).to.equal('success');\r",
+                  "    pm.expect(responseJson.data).to.be.an('array');\r",
+                  "    responseJson.data.forEach((item) => {\r",
+                  "        pm.expect(item.name).to.be.ok;\r",
+                  "        pm.expect(item.photo).to.be.ok;\r",
+                  "        pm.expect(item.description).to.be.ok;\r",
+                  "        pm.expect(item.price).to.be.ok;\r",
+                  "        pm.expect(item.category).to.be.ok;\r",
+                  "        pm.expect(item.is_available).to.be.a('boolean');\r",
+                  "    });\r",
+                  "});\r",
+                  ""
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:{{port}}/menu/items",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "{{port}}",
+              "path": ["menu", "items"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "GET /menu/items?category_id=<valid> → 200, returns only items in that category",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [""],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('it should response 200 status code', () => {\r",
+                  "    pm.expect(pm.response).to.have.status(200);\r",
+                  "});\r",
+                  "\r",
+                  "pm.test('response Content-Type header should have application/json value', () => {\r",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.includes('application/json');\r",
+                  "});\r",
+                  "\r",
+                  "pm.test('response body should an object', () => {\r",
+                  "    const responseJson = pm.response.json();\r",
+                  "    pm.expect(responseJson).to.be.an('object');\r",
+                  "});\r",
+                  "\r",
+                  "pm.test('response body should have correct property and value', () => {\r",
+                  "    const responseJson = pm.response.json();\r",
+                  "    pm.expect(responseJson.status).to.equal('success');\r",
+                  "    pm.expect(responseJson.data).to.be.an('array');\r",
+                  "    responseJson.data.forEach((item) => {\r",
+                  "        pm.expect(item.category_id).to.equal(pm.environment.get('categoryId'));\r",
+                  "    });\r",
+                  "});\r",
+                  ""
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:{{port}}/menu/items?category_id={{categoryId}}",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "{{port}}",
+              "path": ["menu", "items"],
+              "query": [
+                {
+                  "key": "category_id",
+                  "value": "{{categoryId}}"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "GET /menu/items?category_id=<invalid-uuid> → 400",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [""],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('it should response 400 status code', () => {\r",
+                  "    pm.expect(pm.response).to.have.status(400);\r",
+                  "});\r",
+                  "\r",
+                  "pm.test('response Content-Type header should have application/json value', () => {\r",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.includes('application/json');\r",
+                  "});\r",
+                  "\r",
+                  "pm.test('response body should an object', () => {\r",
+                  "    const responseJson = pm.response.json();\r",
+                  "    pm.expect(responseJson).to.be.an('object');\r",
+                  "});\r",
+                  "\r",
+                  "pm.test('response body have correct property and value', () => {\r",
+                  "    const responseJson = pm.response.json();\r",
+                  "    pm.expect(responseJson.status).to.equal('fail');\r",
+                  "    pm.expect(responseJson.message).to.be.a('string');\r",
+                  "});\r",
+                  ""
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:{{port}}/menu/items?category_id=invalid-uuid",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "{{port}}",
+              "path": ["menu", "items"],
+              "query": [
+                {
+                  "key": "category_id",
+                  "value": "invalid-uuid"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "GET /menu/items/:id → 200, returns full detail including photo, description, price, variants/add-ons",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [""],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('it should response 200 status code', () => {\r",
+                  "    pm.expect(pm.response).to.have.status(200);\r",
+                  "});\r",
+                  "\r",
+                  "pm.test('response Content-Type header should have application/json value', () => {\r",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.includes('application/json');\r",
+                  "});\r",
+                  "\r",
+                  "pm.test('response body should an object', () => {\r",
+                  "    const responseJson = pm.response.json();\r",
+                  "    pm.expect(responseJson).to.be.an('object');\r",
+                  "});\r",
+                  "\r",
+                  "pm.test('response body should have correct property and value', () => {\r",
+                  "    const responseJson = pm.response.json();\r",
+                  "    pm.expect(responseJson.status).to.equal('success');\r",
+                  "    pm.expect(responseJson.data).to.be.an('object');\r",
+                  "    pm.expect(responseJson.data.id).to.be.ok;\r",
+                  "    pm.expect(responseJson.data.name).to.be.ok;\r",
+                  "    pm.expect(responseJson.data.photo).to.be.ok;\r",
+                  "    pm.expect(responseJson.data.description).to.be.ok;\r",
+                  "    pm.expect(responseJson.data.price).to.be.ok;\r",
+                  "    pm.expect(responseJson.data.category).to.be.ok;\r",
+                  "    pm.expect(responseJson.data.is_available).to.be.a('boolean');\r",
+                  "});\r",
+                  ""
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:{{port}}/menu/items/{{itemId}}",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "{{port}}",
+              "path": ["menu", "items", "{{itemId}}"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "GET /menu/items/:id for non-existent id → 404",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [""],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('it should response 404 status code', () => {\r",
+                  "    pm.expect(pm.response).to.have.status(404);\r",
+                  "});\r",
+                  "\r",
+                  "pm.test('response Content-Type header should have application/json value', () => {\r",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.includes('application/json');\r",
+                  "});\r",
+                  "\r",
+                  "pm.test('response body should an object', () => {\r",
+                  "    const responseJson = pm.response.json();\r",
+                  "    pm.expect(responseJson).to.be.an('object');\r",
+                  "});\r",
+                  "\r",
+                  "pm.test('response body have correct property and value', () => {\r",
+                  "    const responseJson = pm.response.json();\r",
+                  "    pm.expect(responseJson.status).to.equal('fail');\r",
+                  "    pm.expect(responseJson.message).to.be.a('string');\r",
+                  "});\r",
+                  ""
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:{{port}}/menu/items/00000000-0000-0000-0000-000000000000",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "{{port}}",
+              "path": ["menu", "items", "00000000-0000-0000-0000-000000000000"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "GET /menu/items → returns fresh data (no Cache-Control header)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [""],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('it should response 200 status code', () => {\r",
+                  "    pm.expect(pm.response).to.have.status(200);\r",
+                  "});\r",
+                  "\r",
+                  "pm.test('response Content-Type header should have application/json value', () => {\r",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.includes('application/json');\r",
+                  "});\r",
+                  "\r",
+                  "pm.test('response should have no Cache-Control header', () => {\r",
+                  "    pm.expect(pm.response.headers.get('Cache-Control')).to.be.null;\r",
+                  "});\r",
+                  "\r",
+                  "pm.test('response body should an object', () => {\r",
+                  "    const responseJson = pm.response.json();\r",
+                  "    pm.expect(responseJson).to.be.an('object');\r",
+                  "});\r",
+                  "\r",
+                  "pm.test('response body should have correct property and value', () => {\r",
+                  "    const responseJson = pm.response.json();\r",
+                  "    pm.expect(responseJson.status).to.equal('success');\r",
+                  "    pm.expect(responseJson.data).to.be.an('array');\r",
+                  "});\r",
+                  ""
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:{{port}}/menu/items",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "{{port}}",
+              "path": ["menu", "items"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "GET /menu/items → returns empty array when no items exist → 200 []",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [""],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('it should response 200 status code', () => {\r",
+                  "    pm.expect(pm.response).to.have.status(200);\r",
+                  "});\r",
+                  "\r",
+                  "pm.test('response Content-Type header should have application/json value', () => {\r",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.includes('application/json');\r",
+                  "});\r",
+                  "\r",
+                  "pm.test('response body should an object', () => {\r",
+                  "    const responseJson = pm.response.json();\r",
+                  "    pm.expect(responseJson).to.be.an('object');\r",
+                  "});\r",
+                  "\r",
+                  "pm.test('response body should have correct property and value', () => {\r",
+                  "    const responseJson = pm.response.json();\r",
+                  "    pm.expect(responseJson.status).to.equal('success');\r",
+                  "    pm.expect(responseJson.data).to.be.an('array');\r",
+                  "    pm.expect(responseJson.data).to.have.length(0);\r",
+                  "});\r",
+                  ""
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:{{port}}/menu/items",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "{{port}}",
+              "path": ["menu", "items"]
+            }
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}
