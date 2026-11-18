@@ -6,7 +6,7 @@ import menu from '../services/menu/routes/index.js';
 const router = express.Router();
 
 router.use('/users', users);
-router.use('/authentications', authentications);
+router.use('/auth', authentications);
 router.use('/menu', menu);
 
 export default router;

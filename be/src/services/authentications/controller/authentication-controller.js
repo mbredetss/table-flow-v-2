@@ -1,64 +1,79 @@
 import bcrypt from 'bcrypt';
+import crypto from 'crypto';
 import { TokenManager } from '../../../security/token-manager.js';
 import { response } from '../../../utils/index.js';
 import userRepositories from '../../users/repositories/user-repositories.js';
 import authenticationRepositories from '../repositories/authentication-repositories.js';
 
 export const login = async (req, res) => {
-  const { username, password } = req.validated;
+  const { email, password } = req.validated;
 
-  const user = await userRepositories.verifyUserCredential(username);
+  const user = await userRepositories.findByEmail(email);
 
-  if (user) {
-    const isCredentialValid = await bcrypt.compare(password, user.password);
+  const isValid = await bcrypt.compare(password, user.password);
 
-    if (isCredentialValid) {
-      const id = user.id;
-      const accessToken = TokenManager.generateAccessToken({ id });
-      const refreshToken = TokenManager.generateRefreshToken({ id });
+  if (!user || !isValid) return response(res, 401, 'Invalid email or password', null);
 
-      await authenticationRepositories.addRefreshToken(refreshToken);
+  const accessToken = TokenManager.generateAccessToken({
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+  });
 
-      return response(res, 201, null, {
-        accessToken,
-        refreshToken
-      });
-    }
-    return response(res, 401, 'Username atau password salah!', null);
-  }
+  const refreshToken = crypto.randomUUID();
+  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
 
-  return response(res, 401, 'Username atau password salah!', null);
+  await authenticationRepositories.addRefreshToken(user.id, refreshToken, expiresAt);
+
+  res.cookie('refreshToken', refreshToken, {
+    httpOnly: true,
+    sameSite: 'Strict',
+    secure: process.env.NODE_ENV === 'production',
+    expires: expiresAt,
+  });
+
+  return response(res, 200, null, {
+    accessToken,
+    user: { id: user.id, name: user.name, email: user.email },
+  });
 };
 
-export const newAccessToken = async (req, res) => {
-  const refreshToken = req.validated.refreshToken;
+export const refreshToken = async (req, res) => {
+  const token = req.cookies?.refreshToken;
 
-  const isRefreshTokenValid = await authenticationRepositories.verifyRefreshToken(refreshToken);
+  if (!token) return response(res, 401, 'Refresh token missing', null);
 
-  if (isRefreshTokenValid) {
-    try {
-      const { id } = TokenManager.verifyRefreshToken(refreshToken);
-      const accessToken = TokenManager.generateAccessToken({ id });
+  const record = await authenticationRepositories.findRefreshToken(token);
 
-      return response(res, 200, null, { accessToken });
-    } catch {
-      return response(res, 400, 'Refresh token tidak valid');
-    }
-  }
+  if (!record) return response(res, 401, 'Refresh token invalid or revoked', null);
 
-  return response(res, 400, 'Refresh token tidak valid');
+  if (new Date(record.expires_at) < new Date()) return response(res, 401, 'Refresh token expired', null);
+
+  const user = await userRepositories.findById(record.user_id);
+  
+  if (!user) return response(res, 401, 'User no longer exists', null);
+
+  const accessToken = TokenManager.generateAccessToken({
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+  });
+
+  return response(res, 200, null, { accessToken });
 };
 
-export const deleteRefreshAccessToken = async (req, res) => {
-  const refreshToken = req.validated.refreshToken;
+export const logout = async (req, res) => {
+  const token = req.cookies?.refreshToken;
 
-  const isRefreshTokenValid = await authenticationRepositories.verifyRefreshToken(refreshToken);
+  if (token) await authenticationRepositories.deleteRefreshToken(token);
 
-  if (isRefreshTokenValid) {
-    await authenticationRepositories.deleteRefreshToken(refreshToken);
+  res.clearCookie('refreshToken', {
+    httpOnly: true,
+    sameSite: 'Strict',
+    secure: process.env.NODE_ENV === 'production',
+  });
 
-    return response(res, 200, 'Refresh token berhasil dihapus!', null);
-  }
-
-  return response(res, 400, 'Refresh token tidak valid', null);
+  return res.status(204).send();
 };

@@ -5,26 +5,30 @@ class AuthenticationRepositories {
     this.pool = new Pool();
   }
 
-  async addRefreshToken(token) {
+  async addRefreshToken(userId, refreshToken, expiresAt) {
     await this.pool.query(
-      'INSERT INTO authentications VALUES($1)', [token]
+      `INSERT INTO authentications (user_id, refresh_token, expires_at)
+       VALUES ($1, $2, $3)`,
+      [userId, refreshToken, expiresAt]
     );
   }
 
-  async deleteRefreshToken(token) {
-    await this.pool.query(
-      `DELETE FROM authentications
-            WHERE token = $1`, [token]
-    );
-  }
-
-  async verifyRefreshToken(token) {
+  async findRefreshToken(refreshToken) {
     const result = await this.pool.query(
-      `SELECT token FROM authentications
-            WHERE token = $1`, [token]
+      `SELECT id, user_id, expires_at
+       FROM authentications
+       WHERE refresh_token = $1`,
+      [refreshToken]
     );
 
-    return result.rowCount;
+    return result.rows[0];
+  }
+
+  async deleteRefreshToken(refreshToken) {
+    await this.pool.query(
+      'DELETE FROM authentications WHERE refresh_token = $1',
+      [refreshToken]
+    );
   }
 }
 
