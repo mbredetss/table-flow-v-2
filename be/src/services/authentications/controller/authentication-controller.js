@@ -10,9 +10,11 @@ export const login = async (req, res) => {
 
   const user = await userRepositories.findByEmail(email);
 
+  if (!user) return response(res, 401, 'Invalid email or password', null);
+
   const isValid = await bcrypt.compare(password, user.password);
 
-  if (!user || !isValid) return response(res, 401, 'Invalid email or password', null);
+  if (!isValid) return response(res, 401, 'Invalid email or password', null);
 
   const accessToken = TokenManager.generateAccessToken({
     id: user.id,
