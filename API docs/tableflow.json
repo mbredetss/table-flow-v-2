@@ -107,7 +107,7 @@
     "/menu/items/{id}": {
       "get": {
         "summary": "Get menu item detail",
-        "description": "Returns the full detail of a single menu item including photo, description, price, category, variants/add-ons, and availability. Used when the customer taps an item to view its detail view with full information, fulfilling the acceptance criteria: 'tapping an item opens its detail view with full information'. Response envelope assumed; verify against implementation.",
+        "description": "Returns the full detail of a single menu item including photo, description, price, category, and availability. Used when the customer taps an item to view its detail view with full information, fulfilling the acceptance criteria: 'tapping an item opens its detail view with full information'. Response envelope assumed; verify against implementation.",
         "operationId": "getMenuItemById",
         "tags": ["Menu"],
         "parameters": [
@@ -269,11 +269,6 @@
           "category": {
             "type": "string",
             "description": "Category name, joined from menu_categories."
-          },
-          "variants": {
-            "type": "array",
-            "items": {},
-            "description": "Structure not yet defined in schema — TBD. Mentioned in TDD as 'variants/add-ons' returned in item detail."
           },
           "created_at": {
             "type": "string",
