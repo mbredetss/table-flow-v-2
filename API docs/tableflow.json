@@ -15,6 +15,38 @@
     {
       "name": "Menu",
       "description": "Public menu browsing — no authentication required. Customers can view categories, browse items, and inspect item details immediately after scanning a QR code."
+    },
+    {
+      "name": "Auth",
+      "description": "Customer authentication — registration, login, token refresh, and logout. Public endpoints (no JWT needed); secured by refresh token cookie where applicable."
+    },
+    {
+      "name": "Orders",
+      "description": "Order placement and retrieval. Creating an order requires a confirmed payment reference. Protected by Customer JWT."
+    },
+    {
+      "name": "Payments",
+      "description": "Payment initiation (QRIS via Midtrans), status polling, and Midtrans webhook handler. Initiate and status endpoints require Customer JWT; webhook is public but secured by Midtrans signature."
+    },
+    {
+      "name": "Dashboard",
+      "description": "Cashier real-time order dashboard — initial order load, status advancement, and SSE stream. Requires Cashier or Admin JWT."
+    },
+    {
+      "name": "SSE",
+      "description": "Server-Sent Events streams for real-time updates — cashier dashboard and customer order status tracking. JWT is passed as a query parameter because EventSource does not support custom request headers."
+    },
+    {
+      "name": "Admin - Menu",
+      "description": "Admin-only menu management — create, update, toggle availability, and delete menu items. Requires Admin JWT."
+    },
+    {
+      "name": "Admin - Tables",
+      "description": "Admin-only table management — add/remove tables and generate downloadable QR code PNGs. Requires Admin JWT."
+    },
+    {
+      "name": "Order History",
+      "description": "Customer order history — paginated list of past orders and reorder support. Requires Customer JWT."
     }
   ],
   "paths": {
@@ -154,9 +186,1649 @@
           }
         }
       }
+    },
+    "/users": {
+      "post": {
+        "summary": "Register a new customer",
+        "description": "Registers a new customer account. Hashes the password with bcrypt (cost factor 12), inserts the user with role='customer', issues both an access token (1-hour JWT) and a refresh token (30-day, stored in DB), and returns the access token. The refresh token is set in an HTTP-only SameSite=Strict cookie named 'refreshToken'. On successful registration the user is automatically logged in and redirected to the menu page, satisfying the acceptance criteria: 'On successful registration, the user is automatically logged in'.",
+        "operationId": "registerCustomer",
+        "tags": ["Auth"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Customer registered successfully. Access token returned; refresh token set as HTTP-only cookie.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/AuthResponse"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error — missing fields, password too short, or passwords do not match.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Email already registered — maps to acceptance criteria: 'Email must be unique; display inline error: Email already registered'.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "summary": "Log in a customer",
+        "description": "Authenticates a customer with email and password. On success, returns an access token and sets the refresh token as an HTTP-only cookie. On failure, returns a generic 401 that does not indicate which field (email or password) is incorrect — satisfying the acceptance criteria: 'Login error messages are generic and do not indicate which specific field is incorrect'. Uses bcrypt.compare() with a dummy hash even for non-existent emails to prevent timing attacks.",
+        "operationId": "loginCustomer",
+        "tags": ["Auth"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Login successful. Access token returned; refresh token set as HTTP-only cookie.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/AuthResponse"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error — missing or malformed fields (e.g., not a valid email format).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid credentials. Response message is always 'Invalid email or password' regardless of which field is wrong.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/refresh": {
+      "post": {
+        "summary": "Refresh access token",
+        "description": "Accepts the refresh token from the HTTP-only 'refreshToken' cookie. Verifies it against the authentications table (checks existence and expiry). On success, issues and returns a new access token. On failure (token missing, expired, or revoked), returns 401. Used by the Angular AuthInterceptor to silently refresh tokens when a 401 is received, satisfying: 'session is persisted so user does not need to log in again on subsequent visits'.",
+        "operationId": "refreshAccessToken",
+        "tags": ["Auth"],
+        "responses": {
+          "200": {
+            "description": "New access token issued successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "type": "object",
+                      "required": ["accessToken"],
+                      "properties": {
+                        "accessToken": {
+                          "type": "string",
+                          "description": "Newly issued JWT access token. Valid for 1 hour."
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Refresh token missing, expired, or revoked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/logout": {
+      "delete": {
+        "summary": "Log out a customer",
+        "description": "Revokes the refresh token: deletes the matching row from the authentications table and clears the HTTP-only 'refreshToken' cookie by setting Max-Age=0. Idempotent — returns 204 even if no cookie is present (already logged out). Satisfies the acceptance criteria: 'Logging out clears the session and redirects the user to the Login page'.",
+        "operationId": "logoutCustomer",
+        "tags": ["Auth"],
+        "responses": {
+          "204": {
+            "description": "Logout successful (or already logged out). No response body."
+          }
+        }
+      }
+    },
+    "/orders": {
+      "post": {
+        "summary": "Create a confirmed order",
+        "description": "Creates a confirmed order in the database after payment is verified. Accepts the table number (from QR code scan stored in sessionStorage), list of items (with quantities and optional notes), and the payment reference from the Make Payment feature. Snapshots unit_price from menu_items.price at insertion time to preserve historical accuracy. The order is only persisted here — not before payment — satisfying the acceptance criteria: 'order is only submitted to the system after payment is confirmed — no unpaid orders reach the cashier'. After commit, broadcasts a 'new_order' SSE event to all connected cashier dashboard clients.",
+        "operationId": "createOrder",
+        "tags": ["Orders"],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateOrderRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Order created successfully. Returns the new order ID, status, and total price.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/CreateOrderResponse"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error — empty items array, missing table_number, quantity < 1, or note exceeds 255 characters.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Authorization Bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "One or more menu_item_id values do not reference existing menu items.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Duplicate payment_reference — this payment has already been used to create an order. Prevents double-order on retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "One or more items are no longer available (is_available = false). Message includes the item name, e.g., \"Item 'Nasi Goreng' is no longer available.\" — maps to AC: 'sold-out items cannot be added to cart'.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "List all active orders (cashier dashboard)",
+        "description": "Returns all active orders (status ≠ 'completed') sorted by created_at ascending (oldest first within each status group), with their items, quantities, notes, and table number. Used for the initial dashboard load on page open. Response is grouped by status: { pending, preparing, ready }. Only paid orders appear — no unpaid orders are returned — satisfying the acceptance criteria: 'only paid orders appear on the dashboard'. Requires Cashier or Admin JWT.",
+        "operationId": "listActiveOrders",
+        "tags": ["Dashboard"],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Active orders grouped by status and sorted by created_at ascending.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "pending": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/OrderDetail"
+                          }
+                        },
+                        "preparing": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/OrderDetail"
+                          }
+                        },
+                        "ready": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/OrderDetail"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Authorization Bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but role is not cashier or admin (e.g., customer).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orders/history": {
+      "get": {
+        "summary": "Get customer order history",
+        "description": "Returns all past orders belonging to the authenticated customer, sorted by created_at descending (most recent first). Each entry includes id, created_at, total_price, and status. Supports pagination. Introduced as a separate path from GET /orders to avoid collision with the cashier-scoped endpoint. Satisfies the acceptance criteria: 'past orders are listed sorted by date (most recent first)' and 'history only shows orders belonging to the currently logged-in customer'.",
+        "operationId": "getOrderHistory",
+        "tags": ["Order History"],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "description": "Page number for pagination. Must be ≥ 1. Default: 1.",
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Number of records per page. Must be between 1 and 100. Default: 20.",
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated list of past orders sorted most recent first. Returns empty data array when no orders exist — UI should show 'No orders yet' message.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/OrderSummary"
+                      }
+                    },
+                    "total": {
+                      "type": "integer",
+                      "format": "int64",
+                      "description": "Total number of orders for the customer (across all pages)."
+                    },
+                    "page": {
+                      "type": "integer",
+                      "format": "int64",
+                      "description": "Current page number."
+                    },
+                    "limit": {
+                      "type": "integer",
+                      "format": "int64",
+                      "description": "Number of records per page."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid pagination parameters (e.g., page=abc).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Authorization Bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but role is not customer (e.g., cashier).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orders/{id}": {
+      "get": {
+        "summary": "Get order detail",
+        "description": "Returns the full detail of a single order by its id, including items, quantities, notes, unit_price (the historical price at order time — not the current menu price), total_price, table_number, and status. Used by: (1) the Order Status Tracking feature to seed the tracking screen on initial load, and (2) the Order History feature to display full order detail. The customer may only fetch their own order — returns 403 for another customer's order to prevent enumeration. Satisfies the acceptance criteria: 'item prices in order detail reflect the price at the time the order was placed, not the current price'.",
+        "operationId": "getOrderById",
+        "tags": ["Orders"],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "UUID of the order to retrieve. Must reference an existing orders.id owned by the authenticated customer.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Full order detail returned successfully, including historical unit_price per item.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/OrderDetail"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Authorization Bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated customer does not own this order.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Order with the given id does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orders/{id}/status": {
+      "patch": {
+        "summary": "Advance order status",
+        "description": "Advances an order's status to the next stage in the lifecycle. Allowed transitions: pending → preparing → ready → completed. Any other transition returns 422. After the DB write, broadcasts an 'order_status_updated' SSE event to all connected cashier dashboard clients AND to the customer's per-order SSE stream. Satisfies the acceptance criteria: 'cashier can move an order between statuses (New → Preparing → Ready → Completed)' and 'status updates in real time when cashier changes it on the dashboard'. Requires Cashier or Admin JWT.",
+        "operationId": "updateOrderStatus",
+        "tags": ["Dashboard"],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "UUID of the order to update. Must reference an existing orders.id.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateOrderStatusRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Order status updated successfully. SSE event broadcasted to cashiers and the owning customer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/OrderDetail"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error — invalid or missing status field (e.g., status: 'pending' is not an allowed target).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Authorization Bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but role is not cashier or admin.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Order with the given id does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid status transition (e.g., pending → completed). Message: \"Invalid status transition from '<current>' to '<requested>'\".",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/payments/initiate": {
+      "post": {
+        "summary": "Initiate a QRIS payment",
+        "description": "Creates a new Midtrans QRIS transaction for the given cart total. Server re-computes the total from the submitted items to prevent client-side price manipulation. Calls the Midtrans Core API (payment_type: 'qris'), stores a pending payments row (including cart_snapshot as JSONB for webhook-driven order creation), and returns the QRIS image URL and internal payment_id. QRIS expires after 15 minutes — a countdown timer is displayed to the customer. Satisfies the acceptance criteria: 'QRIS code is generated and scannable with the correct amount encoded' and 'QRIS code expires after 15 minutes'. Requires Customer JWT.",
+        "operationId": "initiatePayment",
+        "tags": ["Payments"],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InitiatePaymentRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Payment initiated. QRIS URL and expiry returned; frontend should start polling GET /payments/:payment_id/status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/InitiatePaymentResponse"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error — missing fields, empty items, or amount does not match server-computed total (tamper prevention).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Authorization Bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Midtrans payment gateway is unreachable or returned an error. Message: 'Payment gateway is unreachable. Please try again.' — maps to AC: 'clear error message shown if payment gateway is unreachable'.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/payments/webhook": {
+      "post": {
+        "summary": "Midtrans payment webhook",
+        "description": "Midtrans server-to-server callback. Receives transaction status updates (settlement, expire, cancel, deny). Verifies the Midtrans signature: SHA512(midtrans_order_id + status_code + gross_amount + server_key). On settlement (successful payment): marks the payment row as 'paid', then calls OrdersService.createOrder using cart_snapshot to persist the order and its items — this ensures the order is created even if the customer has closed the browser. Guards idempotency: does not create a second order if payments.order_id is already set. Satisfies the acceptance criteria: 'order is only created and sent to the cashier dashboard after payment is confirmed' and 'payment confirmation via Midtrans webhook creates the order even if the customer has closed the app'. No JWT — secured by Midtrans signature only.",
+        "operationId": "handlePaymentWebhook",
+        "tags": ["Payments"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MidtransWebhookRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Webhook acknowledged. Midtrans requires a 200 to stop retries.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "success"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid Midtrans signature or malformed payload. Message: 'Invalid signature'.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No payments row found for the given midtrans_order_id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error during order creation after payment confirmation. Midtrans will retry the webhook.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/payments/{payment_id}/status": {
+      "get": {
+        "summary": "Get payment status",
+        "description": "Returns the current status of a payment row (pending, paid, expired, failed). Used by the Angular frontend to poll every 5 seconds while the QRIS countdown is active. On 'paid': frontend stops polling, clears the cart, and navigates to the Payment Success screen. On 'expired'/'failed': frontend stops polling and shows retry options. The requesting customer must own the payment. Requires Customer JWT.",
+        "operationId": "getPaymentStatus",
+        "tags": ["Payments"],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "payment_id",
+            "in": "path",
+            "required": true,
+            "description": "UUID of the payment record to poll. Must reference an existing payments.id owned by the authenticated customer.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current payment status returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/PaymentStatusResponse"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Authorization Bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated customer does not own this payment.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Payment with the given payment_id does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sse/dashboard": {
+      "get": {
+        "summary": "SSE stream — cashier order dashboard",
+        "description": "Opens a persistent Server-Sent Events (SSE) stream for cashier dashboard real-time updates. Keeps the HTTP connection open with Content-Type: text/event-stream. JWT is passed as ?token=<JWT> because EventSource does not support custom request headers. Sends a comment ping ': ping\\n\\n' every 30 seconds to prevent proxy timeouts. Streams two event types: 'new_order' (fired when a new paid order is persisted — data: full order object) and 'order_status_updated' (fired when any cashier advances an order's status — data: { order_id, new_status, updated_at }). Satisfies the acceptance criteria: 'new orders appear on the dashboard in real time without page refresh'. Requires Cashier or Admin JWT via ?token= query param.",
+        "operationId": "subscribeDashboardSSE",
+        "tags": ["SSE"],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": true,
+            "description": "Valid JWT with cashier or admin role. Passed as a query param because EventSource does not support Authorization headers. Treat SSE endpoint logs with the same sensitivity as auth logs.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "SSE stream established. Connection stays open and streams events.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string",
+                  "description": "SSE event stream. Event types: 'new_order' and 'order_status_updated'. Each event: 'event: <name>\\ndata: <JSON>\\n\\n'. Ping comments: ': ping\\n\\n' every 30 seconds."
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token query param.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Token is valid but role is not cashier or admin (e.g., customer).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sse/orders/{order_id}/status": {
+      "get": {
+        "summary": "SSE stream — customer order status",
+        "description": "Opens a persistent SSE stream for a specific order's status changes. Per-order and per-customer — each customer only receives updates for their own order. The server validates that the order belongs to the authenticated customer before accepting the connection; returns 403 without revealing order existence to prevent enumeration. Streams 'order_status_updated' events (data: { order_id, new_status, updated_at }). When status reaches 'completed', the server also sends a final 'order_completed' event and closes the stream. Sends a ping comment every 30 seconds. EventSource auto-reconnects on connection drop. Satisfies the acceptance criteria: 'status updates in real time when cashier changes it on the dashboard' and 'visual alert shown in-app when order status changes to Ready'.",
+        "operationId": "subscribeOrderStatusSSE",
+        "tags": ["SSE"],
+        "parameters": [
+          {
+            "name": "order_id",
+            "in": "path",
+            "required": true,
+            "description": "UUID of the order to track. Must be a valid UUID and must reference an order owned by the authenticated customer.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": true,
+            "description": "Valid JWT with customer role. The customer_id in the token must match the order's customer_id.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "SSE stream established for this order. Connection stays open until order_completed event is sent or client disconnects.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string",
+                  "description": "SSE event stream. Event types: 'order_status_updated' (data: { order_id, new_status, updated_at }) and 'order_completed' (data: { order_id }, server closes stream after this). Ping comments every 30 seconds."
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed order_id — not a valid UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token query param.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Token is valid but the customer does not own this order, or the role is not customer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/menu/items": {
+      "get": {
+        "summary": "List all menu items (admin)",
+        "description": "Returns all menu items including unavailable ones, grouped by category. For admin panel display only — includes items with is_available=false that are hidden from the public customer menu. Requires Admin JWT.",
+        "operationId": "adminListMenuItems",
+        "tags": ["Admin - Menu"],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "All menu items (including unavailable) returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/MenuItem"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Authorization Bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but role is not admin.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create a menu item (admin)",
+        "description": "Creates a new menu item. Accepts multipart/form-data for photo upload. Photo is stored to uploads/menu/ with a UUID filename preserving the original extension. New items are created with is_available=true by default. Because the customer menu is served fresh with no caching, the new item appears on the customer menu immediately after creation. Satisfies the acceptance criteria: 'can add a new menu item with name, description, price, category, and photo' and 'changes are reflected on the customer-facing menu immediately'. Requires Admin JWT.",
+        "operationId": "adminCreateMenuItem",
+        "tags": ["Admin - Menu"],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateMenuItemRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Menu item created successfully with is_available=true.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/MenuItem"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error — missing required fields (name, price, category_id, photo), invalid file type, or file exceeds 5 MB.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Authorization Bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but role is not admin.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Provided category_id does not reference an existing menu_categories row.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/menu/items/{id}": {
+      "patch": {
+        "summary": "Update a menu item (admin)",
+        "description": "Updates an existing menu item's fields (name, description, price, category_id, is_available, photo). Accepts multipart/form-data. All fields are optional for PATCH — at least one must be provided. If a new photo is uploaded, the previous photo file is deleted from disk. Changes are visible immediately on the customer menu (no caching). Satisfies the acceptance criteria: 'can edit an existing menu item's details'. Requires Admin JWT.",
+        "operationId": "adminUpdateMenuItem",
+        "tags": ["Admin - Menu"],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "UUID of the menu item to update.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateMenuItemRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Menu item updated successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/MenuItem"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error — no fields provided ('No fields to update'), invalid file type, or file exceeds 5 MB.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Authorization Bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but role is not admin.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Menu item or provided category_id does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete a menu item (admin)",
+        "description": "Deletes a menu item. Removes the photo file from disk. The order_items foreign key is ON DELETE RESTRICT — if the item appears in any existing order, deletion is blocked with 409 to protect historical order integrity. Admin should mark the item as Sold Out instead. Returns 204 on success. Satisfies the acceptance criteria: 'can delete a menu item'. Requires Admin JWT.",
+        "operationId": "adminDeleteMenuItem",
+        "tags": ["Admin - Menu"],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "UUID of the menu item to delete.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Menu item deleted successfully. No response body."
+          },
+          "401": {
+            "description": "Missing or invalid Authorization Bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but role is not admin.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Menu item does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Cannot delete — item is referenced by existing order_items. Message: 'Cannot delete an item that appears in existing orders. Mark it as Sold Out instead.'",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/menu/items/{id}/availability": {
+      "patch": {
+        "summary": "Toggle menu item availability (admin)",
+        "description": "Convenience endpoint to toggle is_available for a menu item (true ↔ false). Faster than a full PATCH when the admin just needs to mark an item as Sold Out. Because the customer menu is served fresh with no caching, the change is visible to customers on their next menu request with no further action needed. Satisfies the acceptance criteria: 'can mark an item as Sold Out — item shows as unavailable on customer menu' and 'sold-out items remain visible on the customer menu with a Sold Out badge'. Requires Admin JWT.",
+        "operationId": "adminToggleMenuItemAvailability",
+        "tags": ["Admin - Menu"],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "UUID of the menu item whose availability to toggle.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Availability toggled successfully. Returns the item id and new is_available value.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "type": "object",
+                      "required": ["id", "is_available"],
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "is_available": {
+                          "type": "boolean",
+                          "description": "New availability value after toggle."
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Authorization Bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but role is not admin.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Menu item does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/tables": {
+      "get": {
+        "summary": "List all tables (admin)",
+        "description": "Returns all registered tables. Used for the admin Table Management section. Requires Admin JWT.",
+        "operationId": "adminListTables",
+        "tags": ["Admin - Tables"],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "All tables returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Table"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Authorization Bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but role is not admin.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create a table (admin)",
+        "description": "Creates a new table entry with a unique table number (e.g., '1', 'A3'). The table_number is used by customers when they scan QR codes and stored in their session. Satisfies the acceptance criteria: 'admin can add tables from the system'. Requires Admin JWT.",
+        "operationId": "adminCreateTable",
+        "tags": ["Admin - Tables"],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTableRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Table created successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/Table"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error — missing or empty table_number.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Authorization Bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but role is not admin.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Duplicate table_number — a table with this number already exists.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/tables/{id}": {
+      "delete": {
+        "summary": "Delete a table (admin)",
+        "description": "Removes a table from the system. Returns 204. Satisfies the acceptance criteria: 'admin can remove tables from the system'. Requires Admin JWT.",
+        "operationId": "adminDeleteTable",
+        "tags": ["Admin - Tables"],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "UUID of the table to delete.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Table deleted successfully. No response body."
+          },
+          "401": {
+            "description": "Missing or invalid Authorization Bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but role is not admin.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Table does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/tables/{id}/qrcode": {
+      "get": {
+        "summary": "Download table QR code PNG (admin)",
+        "description": "Generates and returns a QR code PNG for the given table, encoding the string 'table:<table_number>' using the qrcode npm package. The PNG is generated on demand — not stored on the server. Response is Content-Type: image/png with Content-Disposition: attachment header for direct download. Satisfies the acceptance criteria: 'admin can generate a unique QR code for each table' and 'QR codes can be downloaded as a PNG image for printing'. Requires Admin JWT.",
+        "operationId": "adminGetTableQrCode",
+        "tags": ["Admin - Tables"],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "UUID of the table for which to generate the QR code.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "QR code PNG generated and returned as a downloadable file. Content-Disposition: attachment; filename='table-<table_number>-qr.png'.",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary",
+                  "description": "PNG binary buffer of the QR code encoding 'table:<table_number>'."
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Authorization Bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but role is not admin.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Table does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "JWT access token issued on login or registration. Payload: { id, name, email, role }. Expires in 1 hour. Attach as 'Authorization: Bearer <token>' header. Use POST /auth/refresh (via HTTP-only refreshToken cookie) to obtain a new token without re-logging in."
+      }
+    },
     "schemas": {
       "MenuCategory": {
         "type": "object",
@@ -279,6 +1951,549 @@
             "type": "string",
             "format": "date-time",
             "description": "Last update timestamp."
+          }
+        }
+      },
+      "RegisterRequest": {
+        "type": "object",
+        "required": ["name", "email", "password", "confirmPassword"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 100,
+            "description": "Customer display name. Required, non-empty."
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "maxLength": 255,
+            "description": "Login email. Must be a valid email format and unique in the users table."
+          },
+          "password": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 72,
+            "description": "Account password. Minimum 8 characters, maximum 72 (bcrypt limit). Will be hashed before storage."
+          },
+          "confirmPassword": {
+            "type": "string",
+            "description": "Must match the password field exactly. Returns 400 with 'Passwords do not match' if not."
+          }
+        }
+      },
+      "LoginRequest": {
+        "type": "object",
+        "required": ["email", "password"],
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "description": "Registered email address."
+          },
+          "password": {
+            "type": "string",
+            "description": "Account password. Non-empty."
+          }
+        }
+      },
+      "AuthResponse": {
+        "type": "object",
+        "required": ["accessToken", "user"],
+        "properties": {
+          "accessToken": {
+            "type": "string",
+            "description": "JWT access token. Valid for 1 hour. Payload: { id, name, email, role }."
+          },
+          "user": {
+            "type": "object",
+            "required": ["id", "name", "email"],
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid",
+                "description": "User primary key."
+              },
+              "name": {
+                "type": "string",
+                "description": "Display name."
+              },
+              "email": {
+                "type": "string",
+                "format": "email",
+                "description": "Login email."
+              }
+            }
+          }
+        }
+      },
+      "User": {
+        "type": "object",
+        "required": ["id", "name", "email", "role", "created_at"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Primary key."
+          },
+          "name": {
+            "type": "string",
+            "description": "Display name."
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "description": "Login email. Unique across users table."
+          },
+          "role": {
+            "type": "string",
+            "enum": ["customer", "cashier", "admin"],
+            "description": "User role. Defaults to 'customer' on registration."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Account creation timestamp."
+          }
+        }
+      },
+      "CreateOrderRequest": {
+        "type": "object",
+        "required": ["table_number", "payment_reference", "items"],
+        "properties": {
+          "table_number": {
+            "type": "string",
+            "maxLength": 20,
+            "description": "Table number from the QR code scan stored in sessionStorage. Required, non-empty."
+          },
+          "payment_reference": {
+            "type": "string",
+            "maxLength": 255,
+            "description": "Payment gateway transaction reference from the Make Payment feature (midtrans_order_id). Must be unique across the orders table to prevent double-order on retry."
+          },
+          "items": {
+            "type": "array",
+            "minItems": 1,
+            "description": "List of ordered items. Must contain at least one element.",
+            "items": {
+              "$ref": "#/components/schemas/OrderItemRequest"
+            }
+          }
+        }
+      },
+      "OrderItemRequest": {
+        "type": "object",
+        "required": ["menu_item_id", "quantity"],
+        "properties": {
+          "menu_item_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "UUID referencing an existing menu_items.id."
+          },
+          "quantity": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1,
+            "maximum": 99,
+            "description": "Number of units ordered. Must be ≥ 1."
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 255,
+            "description": "Optional customer note per item (e.g., 'no ice', 'extra spicy'). Null or empty string allowed."
+          }
+        }
+      },
+      "CreateOrderResponse": {
+        "type": "object",
+        "required": ["order_id", "status", "total_price"],
+        "properties": {
+          "order_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "UUID of the newly created order."
+          },
+          "status": {
+            "type": "string",
+            "example": "pending",
+            "description": "Initial order status. Always 'pending' on creation."
+          },
+          "total_price": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Price in smallest currency unit (cents). Computed as Σ (unit_price × quantity) using snapshotted menu prices."
+          }
+        }
+      },
+      "OrderSummary": {
+        "type": "object",
+        "required": ["id", "created_at", "total_price", "status"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Order primary key."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Order creation timestamp."
+          },
+          "total_price": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Price in smallest currency unit (cents)."
+          },
+          "status": {
+            "type": "string",
+            "enum": ["pending", "preparing", "ready", "completed"],
+            "description": "Current order lifecycle status."
+          }
+        }
+      },
+      "OrderDetail": {
+        "type": "object",
+        "required": ["id", "customer_id", "table_number", "status", "total_price", "payment_reference", "created_at", "updated_at", "items"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Order primary key."
+          },
+          "customer_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "FK → users(id). The customer who placed the order."
+          },
+          "table_number": {
+            "type": "string",
+            "description": "Table number from the QR code scan."
+          },
+          "status": {
+            "type": "string",
+            "enum": ["pending", "preparing", "ready", "completed"],
+            "description": "Order lifecycle status. 'pending' is displayed as 'Received' in the customer-facing UI."
+          },
+          "total_price": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Price in smallest currency unit (cents). Σ (unit_price × quantity) at order time."
+          },
+          "payment_reference": {
+            "type": "string",
+            "description": "Payment gateway transaction reference (midtrans_order_id)."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Timestamp when the order was created."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Timestamp of the last status change."
+          },
+          "items": {
+            "type": "array",
+            "description": "Order line items with historical unit_price snapshot.",
+            "items": {
+              "$ref": "#/components/schemas/OrderItemDetail"
+            }
+          }
+        }
+      },
+      "OrderItemDetail": {
+        "type": "object",
+        "required": ["id", "order_id", "menu_item_id", "quantity", "unit_price", "created_at"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Order item primary key."
+          },
+          "order_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "FK → orders(id). Parent order."
+          },
+          "menu_item_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "FK → menu_items(id). The ordered menu item."
+          },
+          "quantity": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Number of units ordered."
+          },
+          "note": {
+            "type": "string",
+            "description": "Optional customer note per item (e.g., 'no ice'). May be null."
+          },
+          "unit_price": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Price in smallest currency unit (cents). Snapshot of menu_items.price at the time of order. Historical prices are always preserved regardless of future menu price changes."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Creation timestamp."
+          }
+        }
+      },
+      "UpdateOrderStatusRequest": {
+        "type": "object",
+        "required": ["status"],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["preparing", "ready", "completed"],
+            "description": "Target status for the order. Cannot manually set back to 'pending'. Allowed transitions: pending → preparing → ready → completed. Any other transition returns 422."
+          }
+        }
+      },
+      "InitiatePaymentRequest": {
+        "type": "object",
+        "required": ["amount", "table_number", "items"],
+        "properties": {
+          "amount": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Price in smallest currency unit (cents). Must be > 0 and must equal the server-computed sum of items[].price × items[].quantity. Server re-computes to prevent client-side price manipulation."
+          },
+          "table_number": {
+            "type": "string",
+            "maxLength": 20,
+            "description": "Table number from the customer's QR scan session. Required, non-empty."
+          },
+          "items": {
+            "type": "array",
+            "minItems": 1,
+            "description": "Cart items to be paid for. Also stored as cart_snapshot JSONB for webhook-driven order creation.",
+            "items": {
+              "$ref": "#/components/schemas/OrderItemRequest"
+            }
+          }
+        }
+      },
+      "InitiatePaymentResponse": {
+        "type": "object",
+        "required": ["payment_id", "qris_url", "expires_at"],
+        "properties": {
+          "payment_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Internal payment ID. Use to poll GET /payments/:payment_id/status."
+          },
+          "qris_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "QRIS image URL returned by Midtrans. Render as a QR code image for the customer to scan."
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "QRIS expiry timestamp (created_at + 15 minutes). Display a countdown timer to the customer. After expiry, offer 'Generate New QRIS'."
+          }
+        }
+      },
+      "MidtransWebhookRequest": {
+        "type": "object",
+        "required": ["order_id", "transaction_status", "gross_amount", "signature_key"],
+        "properties": {
+          "order_id": {
+            "type": "string",
+            "description": "Midtrans order ID (midtrans_order_id in the payments table, format: TF-<UUID>). Used to look up the payment row."
+          },
+          "transaction_status": {
+            "type": "string",
+            "enum": ["settlement", "expire", "cancel", "deny"],
+            "description": "Midtrans transaction status. Maps to internal status: settlement → paid, expire → expired, cancel/deny → failed."
+          },
+          "gross_amount": {
+            "type": "string",
+            "description": "Transaction amount as a string. Used in Midtrans signature verification: SHA512(order_id + status_code + gross_amount + server_key)."
+          },
+          "signature_key": {
+            "type": "string",
+            "description": "Midtrans signature. Must pass SHA-512 verification. Invalid signatures return 400."
+          },
+          "status_code": {
+            "type": "string",
+            "description": "HTTP status code from Midtrans. Used in signature verification."
+          }
+        }
+      },
+      "Payment": {
+        "type": "object",
+        "required": ["id", "customer_id", "midtrans_order_id", "amount", "status", "cart_snapshot", "expires_at", "created_at", "updated_at"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Internal payment ID."
+          },
+          "customer_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "FK → users(id). The customer initiating the payment."
+          },
+          "midtrans_order_id": {
+            "type": "string",
+            "description": "Unique ID sent to Midtrans (format: TF-<UUID>). Used to correlate the webhook callback."
+          },
+          "amount": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Price in smallest currency unit (cents)."
+          },
+          "status": {
+            "type": "string",
+            "enum": ["pending", "paid", "expired", "failed"],
+            "description": "Payment lifecycle status."
+          },
+          "qris_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "QRIS image URL returned by Midtrans. May be null if generation failed."
+          },
+          "cart_snapshot": {
+            "type": "object",
+            "description": "JSONB snapshot of cart items [{ menu_item_id, quantity, note }] and table_number at initiation time. Used by the webhook handler to create the order without needing the client present — satisfies AC: 'payment confirmation via Midtrans webhook creates the order even if the customer has closed the app'.",
+            "additionalProperties": true
+          },
+          "order_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "FK → orders(id). Populated once the order is created after payment confirmation. Null until then."
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "QRIS expiry timestamp (created_at + 15 minutes)."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Payment creation timestamp."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Last status change timestamp."
+          }
+        }
+      },
+      "PaymentStatusResponse": {
+        "type": "object",
+        "required": ["payment_id", "status"],
+        "properties": {
+          "payment_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Internal payment ID."
+          },
+          "status": {
+            "type": "string",
+            "enum": ["pending", "paid", "expired", "failed"],
+            "description": "Current payment status. Frontend should: on 'paid' → stop polling and navigate to success screen; on 'expired'/'failed' → stop polling and show retry options."
+          },
+          "order_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Order ID populated after payment is confirmed (status = paid). Used to navigate to the Order Status Tracking screen."
+          }
+        }
+      },
+      "CreateMenuItemRequest": {
+        "type": "object",
+        "required": ["name", "description", "price", "category_id", "photo"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 100,
+            "description": "Item name. Required, non-empty."
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 500,
+            "description": "Item description. Required, non-empty."
+          },
+          "price": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Price in smallest currency unit (cents). Must be > 0."
+          },
+          "category_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "UUID referencing an existing menu_categories.id."
+          },
+          "photo": {
+            "type": "string",
+            "format": "binary",
+            "description": "Photo file upload (multipart/form-data). Must be image/jpeg or image/png. Max 5 MB. Stored to uploads/menu/ with a UUID filename."
+          }
+        }
+      },
+      "UpdateMenuItemRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 100,
+            "description": "Updated item name. Optional."
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 500,
+            "description": "Updated item description. Optional."
+          },
+          "price": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Updated price in smallest currency unit (cents). Must be > 0."
+          },
+          "category_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Updated category UUID. Must reference an existing menu_categories.id."
+          },
+          "photo": {
+            "type": "string",
+            "format": "binary",
+            "description": "New photo file upload (multipart/form-data). Must be image/jpeg or image/png. Max 5 MB. Previous photo is deleted from disk."
+          }
+        }
+      },
+      "Table": {
+        "type": "object",
+        "required": ["id", "table_number", "created_at"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Table primary key."
+          },
+          "table_number": {
+            "type": "string",
+            "description": "Human-readable table identifier (e.g., '1', 'A3'). Unique across the tables table. Encoded in the QR code as 'table:<table_number>'."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Creation timestamp."
+          }
+        }
+      },
+      "CreateTableRequest": {
+        "type": "object",
+        "required": ["table_number"],
+        "properties": {
+          "table_number": {
+            "type": "string",
+            "maxLength": 20,
+            "description": "Unique human-readable table identifier (e.g., '1', 'A3'). Must be unique in the tables table."
           }
         }
       },
