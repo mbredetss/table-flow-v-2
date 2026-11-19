@@ -1678,14 +1678,16 @@ describe('HTTP Server', () => {
 
     it('should response 403 when requested by a different authenticated customer', async () => {
       // Arrange
-      const customerA = await UsersTableTestHelper.addUser({
-        id: '00000000-0000-4000-8000-000000000003',
-        email: 'customer.a@example.com',
-      });
+      const customerA = await UsersTableTestHelper.addUser();
       const order = await OrdersTableTestHelper.addOrder({
-        id: '44444444-4444-4444-8444-444444444444',
         customer_id: customerA.id,
         table_number: '12',
+      });
+      await MenuTableTestHelper.addCategory();
+      const menu = await MenuTableTestHelper.addItem();
+      await OrdersTableTestHelper.addOrderItem({
+        order_id: order.id, 
+        menu_item_id: menu.id
       });
 
       const customerBToken = await getCustomerAccessToken({
