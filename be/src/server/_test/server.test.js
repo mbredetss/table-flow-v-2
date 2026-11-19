@@ -1566,7 +1566,8 @@ describe('HTTP Server', () => {
         category_id: category.id,
       });
       await OrdersTableTestHelper.addOrder({
-        id: '44444444-4444-4444-8444-444444444444',
+        id: '44444444-4444-4444-8444-444444444444', 
+        customer_id: '00000000-0000-4000-8000-000000000003',
         payment_reference: 'ORDER-PAY-DUPLICATE',
       });
 
@@ -1677,10 +1678,13 @@ describe('HTTP Server', () => {
 
     it('should response 403 when requested by a different authenticated customer', async () => {
       // Arrange
-      const customerAId = '00000000-0000-4000-8000-000000000003';
+      const customerA = await UsersTableTestHelper.addUser({
+        id: '00000000-0000-4000-8000-000000000003',
+        email: 'customer.a@example.com',
+      });
       const order = await OrdersTableTestHelper.addOrder({
         id: '44444444-4444-4444-8444-444444444444',
-        customer_id: customerAId,
+        customer_id: customerA.id,
         table_number: '12',
       });
 
