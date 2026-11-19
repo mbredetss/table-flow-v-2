@@ -2,7 +2,7 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
-import { response } from '../utils/index.js';
+import { response } from '../../../utils/index.js';
 
 const uploadDir = path.resolve(process.cwd(), 'uploads/menu');
 

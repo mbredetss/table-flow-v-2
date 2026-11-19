@@ -1,5 +1,5 @@
 import express from 'express';
-import { uploadSingle } from '../../../middlewares/upload.js';
+import { uploadSingle } from '../upload/upload.js';
 import {
   getAdminItems,
   createMenuItem,
