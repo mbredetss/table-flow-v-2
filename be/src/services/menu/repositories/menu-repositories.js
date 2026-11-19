@@ -49,6 +49,66 @@ class MenuRepositories {
     );
     return result.rowCount > 0;
   }
+
+  async createItem({ category_id, name, description, photo, price }) {
+    const query = `
+      INSERT INTO menu_items (category_id, name, description, photo, price, is_available)
+      VALUES ($1, $2, $3, $4, $5, true)
+      RETURNING id
+    `;
+    const result = await this.pool.query(query, [category_id, name, description, photo, price]);
+    return this.getItemById(result.rows[0].id);
+  }
+
+  async updateItem(id, updates) {
+    const fields = [];
+    const values = [];
+    let index = 1;
+
+    for (const [key, value] of Object.entries(updates)) {
+      fields.push(`${key} = $${index}`);
+      values.push(value);
+      index++;
+    }
+
+    fields.push(`updated_at = now()`);
+    values.push(id);
+
+    const query = `
+      UPDATE menu_items
+      SET ${fields.join(', ')}
+      WHERE id = $${index}
+      RETURNING id
+    `;
+
+    const result = await this.pool.query(query, values);
+    if (result.rowCount === 0) return null;
+    return this.getItemById(id);
+  }
+
+  async toggleAvailability(id) {
+    const query = `
+      UPDATE menu_items
+      SET is_available = NOT is_available, updated_at = now()
+      WHERE id = $1
+      RETURNING id, is_available
+    `;
+    const result = await this.pool.query(query, [id]);
+    return result.rows[0] || null;
+  }
+
+  async deleteItem(id) {
+    const result = await this.pool.query('DELETE FROM menu_items WHERE id = $1', [id]);
+    return result.rowCount > 0;
+  }
+
+  async hasOrderReferences(id) {
+    const result = await this.pool.query(
+      'SELECT 1 FROM order_items WHERE menu_item_id = $1 LIMIT 1',
+      [id]
+    );
+    return result.rowCount > 0;
+  }
 }
 
 export default new MenuRepositories();
