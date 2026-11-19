@@ -16,7 +16,54 @@ import seedAdmin from '../../../scripts/seed-admin.js';
 
 describe('HTTP Server', () => {
 
+  const deleteUploadedFile = (photoPath) => {
+    if (!photoPath) return;
+    const cleanPath = photoPath.startsWith('/') ? photoPath.slice(1) : photoPath;
+    const filePath = path.resolve(process.cwd(), cleanPath);
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+  };
+
+  const getAdminAccessToken = async () => {
+    await seedAdmin();
+    const loginResponse = await request(app)
+      .post('/auth/login')
+      .send({
+        email: process.env.ADMIN_EMAIL,
+        password: process.env.ADMIN_PASSWORD,
+      });
+    return loginResponse.body?.data?.accessToken;
+  };
+
+  const getCustomerAccessToken = async ({
+    id = '00000000-0000-4000-8000-000000000003',
+    name = 'Customer Test',
+    email = 'customer.auth.test@example.com',
+    password = 'password123',
+  } = {}) => {
+    const hashedPassword = await bcrypt.hash(password, 12);
+    await UsersTableTestHelper.addUser({
+      id,
+      name,
+      email,
+      password: hashedPassword,
+      role: 'customer',
+    });
+    const loginResponse = await request(app)
+      .post('/auth/login')
+      .send({
+        email,
+        password,
+      });
+    return loginResponse.body?.data?.accessToken;
+  };
+
   describe('when POST /users', () => {
+
+    afterEach(async () => {
+      await UsersTableTestHelper.cleanTable();
+    });
 
     it('should response 201 when registering with valid request body', async () => {
       // Arrange
@@ -50,9 +97,6 @@ describe('HTTP Server', () => {
       const cookies = response.headers['set-cookie'];
       expect(cookies).toBeDefined();
       expect(cookies.some((cookie) => cookie.includes('refreshToken='))).toBe(true);
-
-      // Cleanup
-      await UsersTableTestHelper.cleanTable();
     });
 
     it('should response 409 when email is already registered', async () => {
@@ -79,9 +123,6 @@ describe('HTTP Server', () => {
       expect(response.body).toBeTypeOf('object');
       expect(response.body).toHaveProperty('status', 'fail');
       expect(response.body).toHaveProperty('message', 'Email already registered');
-
-      // Cleanup
-      await UsersTableTestHelper.cleanTable();
     });
 
     it('should response 400 when password and confirmPassword do not match', async () => {
@@ -154,22 +195,29 @@ describe('HTTP Server', () => {
   });
 
   describe('when POST /auth/login', () => {
+    let user;
+    const plainPassword = 'validPassword123';
 
-    it('should response 200 when credentials are correct', async () => {
-      // Arrange
-      const plainPassword = 'validPassword123';
+    beforeAll(async () => {
       const hashedPassword = await bcrypt.hash(plainPassword, 12);
-      const user = await UsersTableTestHelper.addUser({
+      user = await UsersTableTestHelper.addUser({
         email: 'login.success@example.com',
         password: hashedPassword,
         name: 'Login Success User',
       });
+    });
 
+    afterAll(async () => {
+      await UsersTableTestHelper.cleanTable();
+      await AuthenticationsTableTestHelper.cleanTable();
+    });
+
+    it('should response 200 when credentials are correct', async () => {
       // Act
       const response = await request(app)
         .post('/auth/login')
         .send({
-          email: 'login.success@example.com',
+          email: user.email,
           password: plainPassword,
         });
 
@@ -191,24 +239,14 @@ describe('HTTP Server', () => {
       const cookies = response.headers['set-cookie'];
       expect(cookies).toBeDefined();
       expect(cookies.some((cookie) => cookie.includes('refreshToken='))).toBe(true);
-
-      // Cleanup
-      await UsersTableTestHelper.cleanTable();
     });
 
     it('should response 401 with generic message when password is wrong', async () => {
-      // Arrange
-      const hashedPassword = await bcrypt.hash('correctPassword123', 12);
-      await UsersTableTestHelper.addUser({
-        email: 'wrongpass@example.com',
-        password: hashedPassword,
-      });
-
       // Act
       const response = await request(app)
         .post('/auth/login')
         .send({
-          email: 'wrongpass@example.com',
+          email: user.email,
           password: 'incorrectPassword123',
         });
 
@@ -218,9 +256,6 @@ describe('HTTP Server', () => {
       expect(response.body).toBeTypeOf('object');
       expect(response.body).toHaveProperty('status', 'fail');
       expect(response.body).toHaveProperty('message', 'Invalid email or password');
-
-      // Cleanup
-      await UsersTableTestHelper.cleanTable();
     });
 
     it('should response 401 with generic message when email does not exist', async () => {
@@ -243,12 +278,25 @@ describe('HTTP Server', () => {
   });
 
   describe('when POST /auth/refresh', () => {
+    let user;
+
+    beforeAll(async () => {
+      user = await UsersTableTestHelper.addUser({
+        email: 'refresh.valid@example.com',
+      });
+    });
+
+    afterAll(async () => {
+      await UsersTableTestHelper.cleanTable();
+      await AuthenticationsTableTestHelper.cleanTable();
+    });
+
+    afterEach(async () => {
+      await AuthenticationsTableTestHelper.cleanTable();
+    });
 
     it('should response 200 with new accessToken when refreshToken cookie is valid', async () => {
       // Arrange
-      const user = await UsersTableTestHelper.addUser({
-        email: 'refresh.valid@example.com',
-      });
       const refreshToken = crypto.randomUUID();
       const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
       await AuthenticationsTableTestHelper.addRefreshToken(user.id, refreshToken, expiresAt);
@@ -267,9 +315,6 @@ describe('HTTP Server', () => {
       expect(response.body.data).toHaveProperty('accessToken');
       expect(typeof response.body.data.accessToken).toBe('string');
       expect(response.body.data.accessToken).toBeTruthy();
-
-      // Cleanup
-      await UsersTableTestHelper.cleanTable();
     });
 
     it('should response 401 when refreshToken cookie is missing', async () => {
@@ -287,9 +332,6 @@ describe('HTTP Server', () => {
 
     it('should response 401 when refreshToken is expired', async () => {
       // Arrange
-      const user = await UsersTableTestHelper.addUser({
-        email: 'refresh.expired@example.com',
-      });
       const expiredRefreshToken = crypto.randomUUID();
       const expiredAt = new Date(Date.now() - 60 * 1000); // 1 minute in the past
       await AuthenticationsTableTestHelper.addRefreshToken(user.id, expiredRefreshToken, expiredAt);
@@ -305,9 +347,6 @@ describe('HTTP Server', () => {
       expect(response.body).toBeTypeOf('object');
       expect(response.body).toHaveProperty('status', 'fail');
       expect(response.body).toHaveProperty('message');
-
-      // Cleanup
-      await UsersTableTestHelper.cleanTable();
     });
 
     it('should response 401 when refreshToken is invalid or revoked', async () => {
@@ -330,6 +369,11 @@ describe('HTTP Server', () => {
   });
 
   describe('when DELETE /auth/logout', () => {
+
+    afterEach(async () => {
+      await AuthenticationsTableTestHelper.cleanTable();
+      await UsersTableTestHelper.cleanTable();
+    });
 
     it('should response 204 and clear cookie when valid refreshToken cookie is sent', async () => {
       // Arrange
@@ -356,9 +400,6 @@ describe('HTTP Server', () => {
         .post('/auth/refresh')
         .set('Cookie', [`refreshToken=${refreshToken}`]);
       expect(refreshResponse.status).toBe(401);
-
-      // Cleanup
-      await UsersTableTestHelper.cleanTable();
     });
 
     it('should response 204 when no refreshToken cookie is present', async () => {
@@ -373,6 +414,10 @@ describe('HTTP Server', () => {
   });
 
   describe('when GET /menu/categories', () => {
+
+    afterEach(async () => {
+      await MenuTableTestHelper.cleanTable();
+    });
 
     it('should response 200 with array of categories ordered alphabetically', async () => {
       // Arrange
@@ -404,14 +449,15 @@ describe('HTTP Server', () => {
         expect(category).toHaveProperty('name');
         expect(category).toHaveProperty('created_at');
       });
-
-      // Cleanup
-      await MenuTableTestHelper.cleanTable();
     });
 
   });
 
   describe('when GET /menu/items', () => {
+
+    afterEach(async () => {
+      await MenuTableTestHelper.cleanTable();
+    });
 
     it('should response 200 with all items containing required fields including availability', async () => {
       // Arrange
@@ -472,9 +518,6 @@ describe('HTTP Server', () => {
       const soldOutItem = response.body.data.find((item) => item.name === 'Mie Goreng');
       expect(availableItem.is_available).toBe(true);
       expect(soldOutItem.is_available).toBe(false);
-
-      // Cleanup
-      await MenuTableTestHelper.cleanTable();
     });
 
     it('should response 200 with items filtered by category_id', async () => {
@@ -513,9 +556,6 @@ describe('HTTP Server', () => {
       expect(response.body.data.length).toBe(1);
       expect(response.body.data[0].category_id).toBe(foodCategory.id);
       expect(response.body.data[0].name).toBe('Nasi Goreng');
-
-      // Cleanup
-      await MenuTableTestHelper.cleanTable();
     });
 
     it('should response 400 when category_id query param is not a valid UUID', async () => {
@@ -562,9 +602,6 @@ describe('HTTP Server', () => {
       expect(secondResponse.body).toBeTypeOf('object');
       expect(secondResponse.body).toHaveProperty('status', 'success');
       expect(secondResponse.body.data[0].price).toBe(25000);
-
-      // Cleanup
-      await MenuTableTestHelper.cleanTable();
     });
 
     it('should response 200 with empty array when no items exist', async () => {
@@ -587,6 +624,10 @@ describe('HTTP Server', () => {
   });
 
   describe('when GET /menu/items/:id', () => {
+
+    afterEach(async () => {
+      await MenuTableTestHelper.cleanTable();
+    });
 
     it('should response 200 with full item detail when item exists', async () => {
       // Arrange
@@ -624,9 +665,6 @@ describe('HTTP Server', () => {
       expect(response.body.data).toHaveProperty('category', category.name);
       expect(response.body.data).toHaveProperty('created_at');
       expect(response.body.data).toHaveProperty('updated_at');
-
-      // Cleanup
-      await MenuTableTestHelper.cleanTable();
     });
 
     it('should response 404 when item id does not exist', async () => {
@@ -647,59 +685,36 @@ describe('HTTP Server', () => {
 
   });
 
-  const deleteUploadedFile = (photoPath) => {
-    if (!photoPath) return;
-    const cleanPath = photoPath.startsWith('/') ? photoPath.slice(1) : photoPath;
-    const filePath = path.resolve(process.cwd(), cleanPath);
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
-    }
-  };
-
-  const getAdminAccessToken = async () => {
-    await seedAdmin();
-    const loginResponse = await request(app)
-      .post('/auth/login')
-      .send({
-        email: process.env.ADMIN_EMAIL,
-        password: process.env.ADMIN_PASSWORD,
-      });
-    return loginResponse.body?.data?.accessToken;
-  };
-
-  const getCustomerAccessToken = async ({
-    id = '00000000-0000-4000-8000-000000000003',
-    name = 'Customer Test',
-    email = 'customer.auth.test@example.com',
-    password = 'password123',
-  } = {}) => {
-    const hashedPassword = await bcrypt.hash(password, 12);
-    await UsersTableTestHelper.addUser({
-      id,
-      name,
-      email,
-      password: hashedPassword,
-      role: 'customer',
-    });
-    const loginResponse = await request(app)
-      .post('/auth/login')
-      .send({
-        email,
-        password,
-      });
-    return loginResponse.body?.data?.accessToken;
-  };
-
   describe('when POST /admin/menu/items', () => {
+    let adminAccessToken;
+    let category;
+    let createdPhotoPath;
 
-    it('should response 201 with created menu item when request body is valid multipart', async () => {
-      // Arrange
-      const adminAccessToken = await getAdminAccessToken();
-      const category = await MenuTableTestHelper.addCategory({
+    beforeAll(async () => {
+      adminAccessToken = await getAdminAccessToken();
+      category = await MenuTableTestHelper.addCategory({
         id: '11111111-1111-4111-8111-111111111111',
         name: 'Main Course',
       });
+    });
 
+    afterAll(async () => {
+      if (createdPhotoPath) {
+        deleteUploadedFile(createdPhotoPath);
+      }
+      await MenuTableTestHelper.cleanTable();
+      await UsersTableTestHelper.cleanTable();
+      await AuthenticationsTableTestHelper.cleanTable();
+    });
+
+    afterEach(async () => {
+      if (createdPhotoPath) {
+        deleteUploadedFile(createdPhotoPath);
+        createdPhotoPath = null;
+      }
+    });
+
+    it('should response 201 with created menu item when request body is valid multipart', async () => {
       // Act
       const response = await request(app)
         .post('/admin/menu/items')
@@ -709,6 +724,8 @@ describe('HTTP Server', () => {
         .field('price', 35000)
         .field('category_id', category.id)
         .attach('photo', Buffer.from('fake-image-content'), 'nasipadang.jpg');
+
+      createdPhotoPath = response.body?.data?.photo;
 
       // Assert
       expect(response.status).toBe(201);
@@ -726,22 +743,9 @@ describe('HTTP Server', () => {
       expect(response.body.data).toHaveProperty('category', category.name);
       expect(response.body.data).toHaveProperty('created_at');
       expect(response.body.data).toHaveProperty('updated_at');
-
-      // Cleanup
-      deleteUploadedFile(response.body?.data?.photo);
-      await MenuTableTestHelper.cleanTable();
-      await UsersTableTestHelper.cleanTable();
-      await AuthenticationsTableTestHelper.cleanTable();
     });
 
     it('should response 400 when missing name', async () => {
-      // Arrange
-      const adminAccessToken = await getAdminAccessToken();
-      const category = await MenuTableTestHelper.addCategory({
-        id: '11111111-1111-4111-8111-111111111111',
-        name: 'Main Course',
-      });
-
       // Act
       const response = await request(app)
         .post('/admin/menu/items')
@@ -757,21 +761,9 @@ describe('HTTP Server', () => {
       expect(response.body).toBeTypeOf('object');
       expect(response.body).toHaveProperty('status', 'fail');
       expect(response.body).toHaveProperty('message');
-
-      // Cleanup
-      await MenuTableTestHelper.cleanTable();
-      await UsersTableTestHelper.cleanTable();
-      await AuthenticationsTableTestHelper.cleanTable();
     });
 
     it('should response 400 when missing price', async () => {
-      // Arrange
-      const adminAccessToken = await getAdminAccessToken();
-      const category = await MenuTableTestHelper.addCategory({
-        id: '11111111-1111-4111-8111-111111111111',
-        name: 'Main Course',
-      });
-
       // Act
       const response = await request(app)
         .post('/admin/menu/items')
@@ -787,17 +779,9 @@ describe('HTTP Server', () => {
       expect(response.body).toBeTypeOf('object');
       expect(response.body).toHaveProperty('status', 'fail');
       expect(response.body).toHaveProperty('message');
-
-      // Cleanup
-      await MenuTableTestHelper.cleanTable();
-      await UsersTableTestHelper.cleanTable();
-      await AuthenticationsTableTestHelper.cleanTable();
     });
 
     it('should response 400 when missing category_id', async () => {
-      // Arrange
-      const adminAccessToken = await getAdminAccessToken();
-
       // Act
       const response = await request(app)
         .post('/admin/menu/items')
@@ -813,30 +797,36 @@ describe('HTTP Server', () => {
       expect(response.body).toBeTypeOf('object');
       expect(response.body).toHaveProperty('status', 'fail');
       expect(response.body).toHaveProperty('message');
-
-      // Cleanup
-      await UsersTableTestHelper.cleanTable();
-      await AuthenticationsTableTestHelper.cleanTable();
     });
 
   });
 
   describe('when PATCH /admin/menu/items/:id', () => {
+    let adminAccessToken;
+    let category;
+    let item;
 
-    it('should response 200 with updated menu item when name is updated', async () => {
-      // Arrange
-      const adminAccessToken = await getAdminAccessToken();
-      const category = await MenuTableTestHelper.addCategory({
+    beforeAll(async () => {
+      adminAccessToken = await getAdminAccessToken();
+      category = await MenuTableTestHelper.addCategory({
         id: '11111111-1111-4111-8111-111111111111',
         name: 'Food',
       });
-      const item = await MenuTableTestHelper.addItem({
+      item = await MenuTableTestHelper.addItem({
         id: '22222222-2222-4222-8222-222222222222',
         category_id: category.id,
         name: 'Sate Ayam',
         price: 20000,
       });
+    });
 
+    afterAll(async () => {
+      await MenuTableTestHelper.cleanTable();
+      await UsersTableTestHelper.cleanTable();
+      await AuthenticationsTableTestHelper.cleanTable();
+    });
+
+    it('should response 200 with updated menu item when name is updated', async () => {
       // Act
       const response = await request(app)
         .patch(`/admin/menu/items/${item.id}`)
@@ -859,31 +849,35 @@ describe('HTTP Server', () => {
       expect(response.body.data).toHaveProperty('category', category.name);
       expect(response.body.data).toHaveProperty('created_at');
       expect(response.body.data).toHaveProperty('updated_at');
-
-      // Cleanup
-      await MenuTableTestHelper.cleanTable();
-      await UsersTableTestHelper.cleanTable();
-      await AuthenticationsTableTestHelper.cleanTable();
     });
 
   });
 
   describe('when PATCH /admin/menu/items/:id/availability', () => {
+    let adminAccessToken;
+    let item;
 
-    it('should response 200 with is_available false when toggling an available item', async () => {
-      // Arrange
-      const adminAccessToken = await getAdminAccessToken();
+    beforeAll(async () => {
+      adminAccessToken = await getAdminAccessToken();
       const category = await MenuTableTestHelper.addCategory({
         id: '11111111-1111-4111-8111-111111111111',
         name: 'Drinks',
       });
-      const item = await MenuTableTestHelper.addItem({
+      item = await MenuTableTestHelper.addItem({
         id: '22222222-2222-4222-8222-222222222222',
         category_id: category.id,
         name: 'Es Teh Manis',
         is_available: true,
       });
+    });
 
+    afterAll(async () => {
+      await MenuTableTestHelper.cleanTable();
+      await UsersTableTestHelper.cleanTable();
+      await AuthenticationsTableTestHelper.cleanTable();
+    });
+
+    it('should response 200 with is_available false when toggling an available item', async () => {
       // Act
       const response = await request(app)
         .patch(`/admin/menu/items/${item.id}/availability`)
@@ -897,20 +891,29 @@ describe('HTTP Server', () => {
       expect(response.body).toHaveProperty('data');
       expect(response.body.data).toHaveProperty('id', item.id);
       expect(response.body.data).toHaveProperty('is_available', false);
-
-      // Cleanup
-      await MenuTableTestHelper.cleanTable();
-      await UsersTableTestHelper.cleanTable();
-      await AuthenticationsTableTestHelper.cleanTable();
     });
 
   });
 
   describe('when DELETE /admin/menu/items/:id', () => {
+    let adminAccessToken;
+
+    beforeAll(async () => {
+      adminAccessToken = await getAdminAccessToken();
+    });
+
+    afterAll(async () => {
+      await UsersTableTestHelper.cleanTable();
+      await AuthenticationsTableTestHelper.cleanTable();
+    });
+
+    afterEach(async () => {
+      await OrdersTableTestHelper.cleanTable();
+      await MenuTableTestHelper.cleanTable();
+    });
 
     it('should response 204 when deleting item with no order references', async () => {
       // Arrange
-      const adminAccessToken = await getAdminAccessToken();
       const category = await MenuTableTestHelper.addCategory({
         id: '11111111-1111-4111-8111-111111111111',
       });
@@ -926,16 +929,10 @@ describe('HTTP Server', () => {
 
       // Assert
       expect(response.status).toBe(204);
-
-      // Cleanup
-      await MenuTableTestHelper.cleanTable();
-      await UsersTableTestHelper.cleanTable();
-      await AuthenticationsTableTestHelper.cleanTable();
     });
 
     it('should response 409 when deleting item referenced in order_items', async () => {
       // Arrange
-      const adminAccessToken = await getAdminAccessToken();
       const category = await MenuTableTestHelper.addCategory({
         id: '11111111-1111-4111-8111-111111111111',
       });
@@ -967,22 +964,27 @@ describe('HTTP Server', () => {
       expect(response.body).toBeTypeOf('object');
       expect(response.body).toHaveProperty('status', 'fail');
       expect(response.body).toHaveProperty('message', 'Cannot delete an item that appears in existing orders. Mark it as Sold Out instead.');
-
-      // Cleanup
-      await OrdersTableTestHelper.cleanTable();
-      await MenuTableTestHelper.cleanTable();
-      await UsersTableTestHelper.cleanTable();
-      await AuthenticationsTableTestHelper.cleanTable();
     });
 
   });
 
   describe('when POST /admin/tables', () => {
+    let adminAccessToken;
+
+    beforeAll(async () => {
+      adminAccessToken = await getAdminAccessToken();
+    });
+
+    afterAll(async () => {
+      await UsersTableTestHelper.cleanTable();
+      await AuthenticationsTableTestHelper.cleanTable();
+    });
+
+    afterEach(async () => {
+      await TablesTableTestHelper.cleanTable();
+    });
 
     it('should response 201 with created table when table_number is unique', async () => {
-      // Arrange
-      const adminAccessToken = await getAdminAccessToken();
-
       // Act
       const response = await request(app)
         .post('/admin/tables')
@@ -998,16 +1000,10 @@ describe('HTTP Server', () => {
       expect(response.body.data).toHaveProperty('id');
       expect(response.body.data).toHaveProperty('table_number', '12');
       expect(response.body.data).toHaveProperty('created_at');
-
-      // Cleanup
-      await TablesTableTestHelper.cleanTable();
-      await UsersTableTestHelper.cleanTable();
-      await AuthenticationsTableTestHelper.cleanTable();
     });
 
     it('should response 409 when table_number already exists', async () => {
       // Arrange
-      const adminAccessToken = await getAdminAccessToken();
       await TablesTableTestHelper.addTable({ table_number: '12' });
 
       // Act
@@ -1022,20 +1018,28 @@ describe('HTTP Server', () => {
       expect(response.body).toBeTypeOf('object');
       expect(response.body).toHaveProperty('status', 'fail');
       expect(response.body).toHaveProperty('message');
-
-      // Cleanup
-      await TablesTableTestHelper.cleanTable();
-      await UsersTableTestHelper.cleanTable();
-      await AuthenticationsTableTestHelper.cleanTable();
     });
 
   });
 
   describe('when DELETE /admin/tables/:id', () => {
+    let adminAccessToken;
+
+    beforeAll(async () => {
+      adminAccessToken = await getAdminAccessToken();
+    });
+
+    afterAll(async () => {
+      await UsersTableTestHelper.cleanTable();
+      await AuthenticationsTableTestHelper.cleanTable();
+    });
+
+    afterEach(async () => {
+      await TablesTableTestHelper.cleanTable();
+    });
 
     it('should response 204 when deleting existing table', async () => {
       // Arrange
-      const adminAccessToken = await getAdminAccessToken();
       const table = await TablesTableTestHelper.addTable({
         id: '33333333-3333-4333-8333-333333333333',
         table_number: '5',
@@ -1048,25 +1052,29 @@ describe('HTTP Server', () => {
 
       // Assert
       expect(response.status).toBe(204);
-
-      // Cleanup
-      await TablesTableTestHelper.cleanTable();
-      await UsersTableTestHelper.cleanTable();
-      await AuthenticationsTableTestHelper.cleanTable();
     });
 
   });
 
   describe('when GET /admin/tables/:id/qrcode', () => {
+    let adminAccessToken;
+    let table;
 
-    it('should response 200 with PNG image and attachment header when table exists', async () => {
-      // Arrange
-      const adminAccessToken = await getAdminAccessToken();
-      const table = await TablesTableTestHelper.addTable({
+    beforeAll(async () => {
+      adminAccessToken = await getAdminAccessToken();
+      table = await TablesTableTestHelper.addTable({
         id: '33333333-3333-4333-8333-333333333333',
         table_number: '5',
       });
+    });
 
+    afterAll(async () => {
+      await TablesTableTestHelper.cleanTable();
+      await UsersTableTestHelper.cleanTable();
+      await AuthenticationsTableTestHelper.cleanTable();
+    });
+
+    it('should response 200 with PNG image and attachment header when table exists', async () => {
       // Act
       const response = await request(app)
         .get(`/admin/tables/${table.id}/qrcode`)
@@ -1077,21 +1085,23 @@ describe('HTTP Server', () => {
       expect(response.headers['content-type']).toMatch(/image\/png/);
       expect(response.headers['content-disposition']).toMatch(/attachment;\s*filename="table-5-qr\.png"/);
       expect(response.body).toBeDefined();
-
-      // Cleanup
-      await TablesTableTestHelper.cleanTable();
-      await UsersTableTestHelper.cleanTable();
-      await AuthenticationsTableTestHelper.cleanTable();
     });
 
   });
 
   describe('when accessing /admin endpoints', () => {
+    let customerAccessToken;
+
+    beforeAll(async () => {
+      customerAccessToken = await getCustomerAccessToken();
+    });
+
+    afterAll(async () => {
+      await UsersTableTestHelper.cleanTable();
+      await AuthenticationsTableTestHelper.cleanTable();
+    });
 
     it('should response 403 when accessed with customer JWT', async () => {
-      // Arrange
-      const customerAccessToken = await getCustomerAccessToken();
-
       // Act
       const response = await request(app)
         .get('/admin/tables')
@@ -1103,10 +1113,6 @@ describe('HTTP Server', () => {
       expect(response.body).toBeTypeOf('object');
       expect(response.body).toHaveProperty('status', 'fail');
       expect(response.body).toHaveProperty('message');
-
-      // Cleanup
-      await UsersTableTestHelper.cleanTable();
-      await AuthenticationsTableTestHelper.cleanTable();
     });
 
     it('should response 401 when accessed without Authorization header', async () => {
@@ -1125,10 +1131,31 @@ describe('HTTP Server', () => {
   });
 
   describe('when GET /menu/items (menu update reflection)', () => {
+    let adminAccessToken;
+    let createdPhotoPath;
+
+    beforeAll(async () => {
+      adminAccessToken = await getAdminAccessToken();
+    });
+
+    afterAll(async () => {
+      if (createdPhotoPath) {
+        deleteUploadedFile(createdPhotoPath);
+      }
+      await UsersTableTestHelper.cleanTable();
+      await AuthenticationsTableTestHelper.cleanTable();
+    });
+
+    afterEach(async () => {
+      if (createdPhotoPath) {
+        deleteUploadedFile(createdPhotoPath);
+        createdPhotoPath = null;
+      }
+      await MenuTableTestHelper.cleanTable();
+    });
 
     it('should response 200 with item still in list and is_available false after toggling availability', async () => {
       // Arrange
-      const adminAccessToken = await getAdminAccessToken();
       const category = await MenuTableTestHelper.addCategory({
         id: '11111111-1111-4111-8111-111111111111',
         name: 'Drinks',
@@ -1159,16 +1186,10 @@ describe('HTTP Server', () => {
       const foundItem = response.body.data.find((menuItem) => menuItem.id === item.id);
       expect(foundItem).toBeDefined();
       expect(foundItem.is_available).toBe(false);
-
-      // Cleanup
-      await MenuTableTestHelper.cleanTable();
-      await UsersTableTestHelper.cleanTable();
-      await AuthenticationsTableTestHelper.cleanTable();
     });
 
     it('should response 200 with newly created item immediately reflected without caching', async () => {
       // Arrange
-      const adminAccessToken = await getAdminAccessToken();
       const category = await MenuTableTestHelper.addCategory({
         id: '11111111-1111-4111-8111-111111111111',
         name: 'Food',
@@ -1184,6 +1205,8 @@ describe('HTTP Server', () => {
         .field('category_id', category.id)
         .attach('photo', Buffer.from('fake-image-content'), 'rendang.jpg');
 
+      createdPhotoPath = createResponse.body?.data?.photo;
+
       // Act
       const response = await request(app)
         .get('/menu/items');
@@ -1198,33 +1221,43 @@ describe('HTTP Server', () => {
       const foundItem = response.body.data.find((menuItem) => menuItem.name === 'Rendang Sapi Spesial');
       expect(foundItem).toBeDefined();
       expect(foundItem.price).toBe(40000);
-
-      // Cleanup
-      deleteUploadedFile(createResponse.body?.data?.photo);
-      await MenuTableTestHelper.cleanTable();
-      await UsersTableTestHelper.cleanTable();
-      await AuthenticationsTableTestHelper.cleanTable();
     });
 
   });
 
   describe('when POST /orders', () => {
+    let customerAccessToken;
+    let category;
+    let item;
 
-    it('should response 201 with created order details when request payload is valid', async () => {
-      // Arrange
-      const customerAccessToken = await getCustomerAccessToken();
-      const category = await MenuTableTestHelper.addCategory({
+    beforeAll(async () => {
+      customerAccessToken = await getCustomerAccessToken();
+      category = await MenuTableTestHelper.addCategory({
         id: '11111111-1111-4111-8111-111111111111',
         name: 'Food',
       });
-      const item = await MenuTableTestHelper.addItem({
+      item = await MenuTableTestHelper.addItem({
         id: '22222222-2222-4222-8222-222222222222',
         category_id: category.id,
         name: 'Ayam Geprek',
         price: 25000,
         is_available: true,
       });
+    });
 
+    afterAll(async () => {
+      await OrdersTableTestHelper.cleanTable();
+      await MenuTableTestHelper.cleanTable();
+      await UsersTableTestHelper.cleanTable();
+      await AuthenticationsTableTestHelper.cleanTable();
+    });
+
+    afterEach(async () => {
+      await OrdersTableTestHelper.cleanTable();
+    });
+
+    it('should response 201 with created order details when request payload is valid', async () => {
+      // Arrange
       const requestPayload = {
         table_number: '12',
         payment_reference: 'ORDER-PAY-001',
@@ -1253,23 +1286,12 @@ describe('HTTP Server', () => {
       expect(typeof response.body.data.order_id).toBe('string');
       expect(response.body.data).toHaveProperty('status', 'pending');
       expect(response.body.data).toHaveProperty('total_price', 50000);
-
-      // Cleanup
-      await OrdersTableTestHelper.cleanTable();
-      await MenuTableTestHelper.cleanTable();
-      await UsersTableTestHelper.cleanTable();
-      await AuthenticationsTableTestHelper.cleanTable();
     });
 
     it('should response 201 and snapshot unit_price in order_items correctly even when menu item price later changes', async () => {
       // Arrange
-      const customerAccessToken = await getCustomerAccessToken();
-      const category = await MenuTableTestHelper.addCategory({
-        id: '11111111-1111-4111-8111-111111111111',
-        name: 'Food',
-      });
-      const item = await MenuTableTestHelper.addItem({
-        id: '22222222-2222-4222-8222-222222222222',
+      const priceTestItem = await MenuTableTestHelper.addItem({
+        id: '66666666-6666-4666-8666-666666666666',
         category_id: category.id,
         name: 'Nasi Bakar',
         price: 25000,
@@ -1281,7 +1303,7 @@ describe('HTTP Server', () => {
         payment_reference: 'ORDER-PAY-008',
         items: [
           {
-            menu_item_id: item.id,
+            menu_item_id: priceTestItem.id,
             quantity: 2,
           },
         ],
@@ -1294,7 +1316,7 @@ describe('HTTP Server', () => {
         .send(requestPayload);
 
       // Act 2: Later update menu item price to 35000
-      await MenuTableTestHelper.updateItemPrice(item.id, 35000);
+      await MenuTableTestHelper.updateItemPrice(priceTestItem.id, 35000);
 
       // Assert: Historical unit_price snapshot in order_items is still 25000
       expect(response.status).toBe(201);
@@ -1306,12 +1328,6 @@ describe('HTTP Server', () => {
       const orderItems = await OrdersTableTestHelper.findOrderItemsByOrderId(response.body.data.order_id);
       expect(orderItems).toHaveLength(1);
       expect(orderItems[0].unit_price).toBe(25000);
-
-      // Cleanup
-      await OrdersTableTestHelper.cleanTable();
-      await MenuTableTestHelper.cleanTable();
-      await UsersTableTestHelper.cleanTable();
-      await AuthenticationsTableTestHelper.cleanTable();
     });
 
     it('should response 401 when Authorization header is missing', async () => {
@@ -1323,7 +1339,7 @@ describe('HTTP Server', () => {
           payment_reference: 'ORDER-PAY-002',
           items: [
             {
-              menu_item_id: '22222222-2222-4222-8222-222222222222',
+              menu_item_id: item.id,
               quantity: 1,
             },
           ],
@@ -1338,9 +1354,6 @@ describe('HTTP Server', () => {
     });
 
     it('should response 400 when items array is empty', async () => {
-      // Arrange
-      const customerAccessToken = await getCustomerAccessToken();
-
       // Act
       const response = await request(app)
         .post('/orders')
@@ -1357,23 +1370,9 @@ describe('HTTP Server', () => {
       expect(response.body).toBeTypeOf('object');
       expect(response.body).toHaveProperty('status', 'fail');
       expect(response.body).toHaveProperty('message');
-
-      // Cleanup
-      await UsersTableTestHelper.cleanTable();
-      await AuthenticationsTableTestHelper.cleanTable();
     });
 
     it('should response 400 when table_number is missing', async () => {
-      // Arrange
-      const customerAccessToken = await getCustomerAccessToken();
-      const category = await MenuTableTestHelper.addCategory({
-        id: '11111111-1111-4111-8111-111111111111',
-      });
-      const item = await MenuTableTestHelper.addItem({
-        id: '22222222-2222-4222-8222-222222222222',
-        category_id: category.id,
-      });
-
       // Act
       const response = await request(app)
         .post('/orders')
@@ -1394,24 +1393,9 @@ describe('HTTP Server', () => {
       expect(response.body).toBeTypeOf('object');
       expect(response.body).toHaveProperty('status', 'fail');
       expect(response.body).toHaveProperty('message');
-
-      // Cleanup
-      await MenuTableTestHelper.cleanTable();
-      await UsersTableTestHelper.cleanTable();
-      await AuthenticationsTableTestHelper.cleanTable();
     });
 
     it('should response 400 when item quantity is 0', async () => {
-      // Arrange
-      const customerAccessToken = await getCustomerAccessToken();
-      const category = await MenuTableTestHelper.addCategory({
-        id: '11111111-1111-4111-8111-111111111111',
-      });
-      const item = await MenuTableTestHelper.addItem({
-        id: '22222222-2222-4222-8222-222222222222',
-        category_id: category.id,
-      });
-
       // Act
       const response = await request(app)
         .post('/orders')
@@ -1433,23 +1417,10 @@ describe('HTTP Server', () => {
       expect(response.body).toBeTypeOf('object');
       expect(response.body).toHaveProperty('status', 'fail');
       expect(response.body).toHaveProperty('message');
-
-      // Cleanup
-      await MenuTableTestHelper.cleanTable();
-      await UsersTableTestHelper.cleanTable();
-      await AuthenticationsTableTestHelper.cleanTable();
     });
 
     it('should response 400 when note exceeds 255 characters', async () => {
       // Arrange
-      const customerAccessToken = await getCustomerAccessToken();
-      const category = await MenuTableTestHelper.addCategory({
-        id: '11111111-1111-4111-8111-111111111111',
-      });
-      const item = await MenuTableTestHelper.addItem({
-        id: '22222222-2222-4222-8222-222222222222',
-        category_id: category.id,
-      });
       const longNote = 'a'.repeat(256);
 
       // Act
@@ -1474,16 +1445,10 @@ describe('HTTP Server', () => {
       expect(response.body).toBeTypeOf('object');
       expect(response.body).toHaveProperty('status', 'fail');
       expect(response.body).toHaveProperty('message');
-
-      // Cleanup
-      await MenuTableTestHelper.cleanTable();
-      await UsersTableTestHelper.cleanTable();
-      await AuthenticationsTableTestHelper.cleanTable();
     });
 
     it('should response 404 when menu_item_id does not exist', async () => {
       // Arrange
-      const customerAccessToken = await getCustomerAccessToken();
       const nonExistentMenuItemId = '00000000-0000-0000-0000-000000000000';
 
       // Act
@@ -1507,20 +1472,12 @@ describe('HTTP Server', () => {
       expect(response.body).toBeTypeOf('object');
       expect(response.body).toHaveProperty('status', 'fail');
       expect(response.body).toHaveProperty('message');
-
-      // Cleanup
-      await UsersTableTestHelper.cleanTable();
-      await AuthenticationsTableTestHelper.cleanTable();
     });
 
     it('should response 422 with item name when menu item is sold out', async () => {
       // Arrange
-      const customerAccessToken = await getCustomerAccessToken();
-      const category = await MenuTableTestHelper.addCategory({
-        id: '11111111-1111-4111-8111-111111111111',
-      });
-      const item = await MenuTableTestHelper.addItem({
-        id: '22222222-2222-4222-8222-222222222222',
+      const soldOutItem = await MenuTableTestHelper.addItem({
+        id: '77777777-7777-4777-8777-777777777777',
         category_id: category.id,
         name: 'Es Cendol',
         is_available: false,
@@ -1535,7 +1492,7 @@ describe('HTTP Server', () => {
           payment_reference: 'ORDER-PAY-006',
           items: [
             {
-              menu_item_id: item.id,
+              menu_item_id: soldOutItem.id,
               quantity: 1,
             },
           ],
@@ -1548,23 +1505,10 @@ describe('HTTP Server', () => {
       expect(response.body).toHaveProperty('status', 'fail');
       expect(response.body).toHaveProperty('message');
       expect(response.body.message).toContain('Es Cendol');
-
-      // Cleanup
-      await MenuTableTestHelper.cleanTable();
-      await UsersTableTestHelper.cleanTable();
-      await AuthenticationsTableTestHelper.cleanTable();
     });
 
     it('should response 409 when payment_reference is duplicate', async () => {
       // Arrange
-      const customerAccessToken = await getCustomerAccessToken();
-      const category = await MenuTableTestHelper.addCategory({
-        id: '11111111-1111-4111-8111-111111111111',
-      });
-      const item = await MenuTableTestHelper.addItem({
-        id: '22222222-2222-4222-8222-222222222222',
-        category_id: category.id,
-      });
       await OrdersTableTestHelper.addOrder({
         id: '44444444-4444-4444-8444-444444444444', 
         customer_id: '00000000-0000-4000-8000-000000000003',
@@ -1592,12 +1536,6 @@ describe('HTTP Server', () => {
       expect(response.body).toBeTypeOf('object');
       expect(response.body).toHaveProperty('status', 'fail');
       expect(response.body).toHaveProperty('message');
-
-      // Cleanup
-      await OrdersTableTestHelper.cleanTable();
-      await MenuTableTestHelper.cleanTable();
-      await UsersTableTestHelper.cleanTable();
-      await AuthenticationsTableTestHelper.cleanTable();
     });
 
     // TODO: No test case covers AC — "can add a menu item to cart from the item detail screen"
@@ -1610,20 +1548,35 @@ describe('HTTP Server', () => {
   });
 
   describe('when GET /orders/:id', () => {
+    let customerId;
+    let customerAccessToken;
+    let otherCustomerAccessToken;
+    let category;
+    let item;
+    let order;
 
-    it('should response 200 with full order detail when requested by owning customer', async () => {
-      // Arrange
-      const customerId = '00000000-0000-4000-8000-000000000003';
-      const customerAccessToken = await getCustomerAccessToken({ id: customerId });
-      const category = await MenuTableTestHelper.addCategory({
+    beforeAll(async () => {
+      customerId = '00000000-0000-4000-8000-000000000003';
+      customerAccessToken = await getCustomerAccessToken({
+        id: customerId,
+        name: 'Customer Test',
+        email: 'customer.auth.test@example.com',
+      });
+      otherCustomerAccessToken = await getCustomerAccessToken({
+        id: '00000000-0000-4000-8000-000000000004',
+        name: 'Customer Other',
+        email: 'customer.other@example.com',
+      });
+
+      category = await MenuTableTestHelper.addCategory({
         id: '11111111-1111-4111-8111-111111111111',
       });
-      const item = await MenuTableTestHelper.addItem({
+      item = await MenuTableTestHelper.addItem({
         id: '22222222-2222-4222-8222-222222222222',
         category_id: category.id,
         price: 25000,
       });
-      const order = await OrdersTableTestHelper.addOrder({
+      order = await OrdersTableTestHelper.addOrder({
         id: '44444444-4444-4444-8444-444444444444',
         customer_id: customerId,
         table_number: '12',
@@ -1639,7 +1592,16 @@ describe('HTTP Server', () => {
         note: 'extra lime',
         unit_price: 25000,
       });
+    });
 
+    afterAll(async () => {
+      await OrdersTableTestHelper.cleanTable();
+      await MenuTableTestHelper.cleanTable();
+      await UsersTableTestHelper.cleanTable();
+      await AuthenticationsTableTestHelper.cleanTable();
+    });
+
+    it('should response 200 with full order detail when requested by owning customer', async () => {
       // Act
       const response = await request(app)
         .get(`/orders/${order.id}`)
@@ -1668,38 +1630,13 @@ describe('HTTP Server', () => {
       expect(response.body.data.items[0]).toHaveProperty('note', 'extra lime');
       expect(response.body.data.items[0]).toHaveProperty('unit_price', 25000);
       expect(response.body.data.items[0]).toHaveProperty('created_at');
-
-      // Cleanup
-      await OrdersTableTestHelper.cleanTable();
-      await MenuTableTestHelper.cleanTable();
-      await UsersTableTestHelper.cleanTable();
-      await AuthenticationsTableTestHelper.cleanTable();
     });
 
     it('should response 403 when requested by a different authenticated customer', async () => {
-      // Arrange
-      const customerA = await UsersTableTestHelper.addUser();
-      const order = await OrdersTableTestHelper.addOrder({
-        customer_id: customerA.id,
-        table_number: '12',
-      });
-      await MenuTableTestHelper.addCategory();
-      const menu = await MenuTableTestHelper.addItem();
-      await OrdersTableTestHelper.addOrderItem({
-        order_id: order.id, 
-        menu_item_id: menu.id
-      });
-
-      const customerBToken = await getCustomerAccessToken({
-        id: '00000000-0000-4000-8000-000000000004',
-        email: 'customer.other@example.com',
-        name: 'Customer Other',
-      });
-
       // Act
       const response = await request(app)
         .get(`/orders/${order.id}`)
-        .set('Authorization', `Bearer ${customerBToken}`);
+        .set('Authorization', `Bearer ${otherCustomerAccessToken}`);
 
       // Assert
       expect(response.status).toBe(403);
@@ -1707,16 +1644,10 @@ describe('HTTP Server', () => {
       expect(response.body).toBeTypeOf('object');
       expect(response.body).toHaveProperty('status', 'fail');
       expect(response.body).toHaveProperty('message');
-
-      // Cleanup
-      await OrdersTableTestHelper.cleanTable();
-      await UsersTableTestHelper.cleanTable();
-      await AuthenticationsTableTestHelper.cleanTable();
     });
 
     it('should response 404 when order id does not exist', async () => {
       // Arrange
-      const customerAccessToken = await getCustomerAccessToken();
       const nonExistentOrderId = '00000000-0000-0000-0000-000000000000';
 
       // Act
@@ -1730,10 +1661,6 @@ describe('HTTP Server', () => {
       expect(response.body).toBeTypeOf('object');
       expect(response.body).toHaveProperty('status', 'fail');
       expect(response.body).toHaveProperty('message');
-
-      // Cleanup
-      await UsersTableTestHelper.cleanTable();
-      await AuthenticationsTableTestHelper.cleanTable();
     });
 
   });
