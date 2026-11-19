@@ -8,6 +8,9 @@ import authenticate from '../../middlewares/authenticate.js';
 import UsersTableTestHelper from '../../../tests/UsersTableTestHelper.js';
 import AuthenticationsTableTestHelper from '../../../tests/AuthenticationsTableTestHelper.js';
 import MenuTableTestHelper from '../../../tests/MenuTableTestHelper.js';
+import TablesTableTestHelper from '../../../tests/TablesTableTestHelper.js';
+import OrdersTableTestHelper from '../../../tests/OrdersTableTestHelper.js';
+import seedAdmin from '../../../scripts/seed-admin.js';
 
 describe('HTTP Server', () => {
 
@@ -638,6 +641,552 @@ describe('HTTP Server', () => {
       expect(response.body).toBeTypeOf('object');
       expect(response.body).toHaveProperty('status', 'fail');
       expect(response.body).toHaveProperty('message');
+    });
+
+  });
+
+  const getAdminAccessToken = async () => {
+    await seedAdmin();
+    const loginResponse = await request(app)
+      .post('/auth/login')
+      .send({
+        email: process.env.ADMIN_EMAIL,
+        password: process.env.ADMIN_PASSWORD,
+      });
+    return loginResponse.body?.data?.accessToken;
+  };
+
+  const getCustomerAccessToken = async () => {
+    const customerPassword = 'password123';
+    const hashedPassword = await bcrypt.hash(customerPassword, 12);
+    await UsersTableTestHelper.addUser({
+      id: '00000000-0000-4000-8000-000000000003',
+      name: 'Customer Test',
+      email: 'customer.auth.test@example.com',
+      password: hashedPassword,
+      role: 'customer',
+    });
+    const loginResponse = await request(app)
+      .post('/auth/login')
+      .send({
+        email: 'customer.auth.test@example.com',
+        password: customerPassword,
+      });
+    return loginResponse.body?.data?.accessToken;
+  };
+
+  describe('when POST /admin/menu/items', () => {
+
+    it('should response 201 with created menu item when request body is valid multipart', async () => {
+      // Arrange
+      const adminAccessToken = await getAdminAccessToken();
+      const category = await MenuTableTestHelper.addCategory({
+        id: '11111111-1111-4111-8111-111111111111',
+        name: 'Main Course',
+      });
+
+      // Act
+      const response = await request(app)
+        .post('/admin/menu/items')
+        .set('Authorization', `Bearer ${adminAccessToken}`)
+        .field('name', 'Nasi Padang Komplit')
+        .field('description', 'Authentic nasi padang with rendang and sambal')
+        .field('price', 35000)
+        .field('category_id', category.id)
+        .attach('photo', Buffer.from('fake-image-content'), 'nasipadang.jpg');
+
+      // Assert
+      expect(response.status).toBe(201);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'success');
+      expect(response.body).toHaveProperty('data');
+      expect(response.body.data).toHaveProperty('id');
+      expect(response.body.data).toHaveProperty('category_id', category.id);
+      expect(response.body.data).toHaveProperty('name', 'Nasi Padang Komplit');
+      expect(response.body.data).toHaveProperty('description', 'Authentic nasi padang with rendang and sambal');
+      expect(response.body.data).toHaveProperty('photo');
+      expect(response.body.data).toHaveProperty('price', 35000);
+      expect(response.body.data).toHaveProperty('is_available', true);
+      expect(response.body.data).toHaveProperty('category', category.name);
+      expect(response.body.data).toHaveProperty('created_at');
+      expect(response.body.data).toHaveProperty('updated_at');
+
+      // Cleanup
+      await MenuTableTestHelper.cleanTable();
+      await UsersTableTestHelper.cleanTable();
+      await AuthenticationsTableTestHelper.cleanTable();
+    });
+
+    it('should response 400 when missing name', async () => {
+      // Arrange
+      const adminAccessToken = await getAdminAccessToken();
+      const category = await MenuTableTestHelper.addCategory({
+        id: '11111111-1111-4111-8111-111111111111',
+        name: 'Main Course',
+      });
+
+      // Act
+      const response = await request(app)
+        .post('/admin/menu/items')
+        .set('Authorization', `Bearer ${adminAccessToken}`)
+        .field('description', 'Delicious food without name')
+        .field('price', 20000)
+        .field('category_id', category.id)
+        .attach('photo', Buffer.from('fake-image-content'), 'food.jpg');
+
+      // Assert
+      expect(response.status).toBe(400);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'fail');
+      expect(response.body).toHaveProperty('message');
+
+      // Cleanup
+      await MenuTableTestHelper.cleanTable();
+      await UsersTableTestHelper.cleanTable();
+      await AuthenticationsTableTestHelper.cleanTable();
+    });
+
+    it('should response 400 when missing price', async () => {
+      // Arrange
+      const adminAccessToken = await getAdminAccessToken();
+      const category = await MenuTableTestHelper.addCategory({
+        id: '11111111-1111-4111-8111-111111111111',
+        name: 'Main Course',
+      });
+
+      // Act
+      const response = await request(app)
+        .post('/admin/menu/items')
+        .set('Authorization', `Bearer ${adminAccessToken}`)
+        .field('name', 'Nasi Goreng')
+        .field('description', 'Fried rice')
+        .field('category_id', category.id)
+        .attach('photo', Buffer.from('fake-image-content'), 'nasgor.jpg');
+
+      // Assert
+      expect(response.status).toBe(400);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'fail');
+      expect(response.body).toHaveProperty('message');
+
+      // Cleanup
+      await MenuTableTestHelper.cleanTable();
+      await UsersTableTestHelper.cleanTable();
+      await AuthenticationsTableTestHelper.cleanTable();
+    });
+
+    it('should response 400 when missing category_id', async () => {
+      // Arrange
+      const adminAccessToken = await getAdminAccessToken();
+
+      // Act
+      const response = await request(app)
+        .post('/admin/menu/items')
+        .set('Authorization', `Bearer ${adminAccessToken}`)
+        .field('name', 'Nasi Goreng')
+        .field('description', 'Fried rice')
+        .field('price', 25000)
+        .attach('photo', Buffer.from('fake-image-content'), 'nasgor.jpg');
+
+      // Assert
+      expect(response.status).toBe(400);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'fail');
+      expect(response.body).toHaveProperty('message');
+
+      // Cleanup
+      await UsersTableTestHelper.cleanTable();
+      await AuthenticationsTableTestHelper.cleanTable();
+    });
+
+  });
+
+  describe('when PATCH /admin/menu/items/:id', () => {
+
+    it('should response 200 with updated menu item when name is updated', async () => {
+      // Arrange
+      const adminAccessToken = await getAdminAccessToken();
+      const category = await MenuTableTestHelper.addCategory({
+        id: '11111111-1111-4111-8111-111111111111',
+        name: 'Food',
+      });
+      const item = await MenuTableTestHelper.addItem({
+        id: '22222222-2222-4222-8222-222222222222',
+        category_id: category.id,
+        name: 'Sate Ayam',
+        price: 20000,
+      });
+
+      // Act
+      const response = await request(app)
+        .patch(`/admin/menu/items/${item.id}`)
+        .set('Authorization', `Bearer ${adminAccessToken}`)
+        .field('name', 'Sate Ayam Madura');
+
+      // Assert
+      expect(response.status).toBe(200);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'success');
+      expect(response.body).toHaveProperty('data');
+      expect(response.body.data).toHaveProperty('id', item.id);
+      expect(response.body.data).toHaveProperty('category_id', category.id);
+      expect(response.body.data).toHaveProperty('name', 'Sate Ayam Madura');
+      expect(response.body.data).toHaveProperty('description', item.description);
+      expect(response.body.data).toHaveProperty('photo', item.photo);
+      expect(response.body.data).toHaveProperty('price', item.price);
+      expect(response.body.data).toHaveProperty('is_available', true);
+      expect(response.body.data).toHaveProperty('category', category.name);
+      expect(response.body.data).toHaveProperty('created_at');
+      expect(response.body.data).toHaveProperty('updated_at');
+
+      // Cleanup
+      await MenuTableTestHelper.cleanTable();
+      await UsersTableTestHelper.cleanTable();
+      await AuthenticationsTableTestHelper.cleanTable();
+    });
+
+  });
+
+  describe('when PATCH /admin/menu/items/:id/availability', () => {
+
+    it('should response 200 with is_available false when toggling an available item', async () => {
+      // Arrange
+      const adminAccessToken = await getAdminAccessToken();
+      const category = await MenuTableTestHelper.addCategory({
+        id: '11111111-1111-4111-8111-111111111111',
+        name: 'Drinks',
+      });
+      const item = await MenuTableTestHelper.addItem({
+        id: '22222222-2222-4222-8222-222222222222',
+        category_id: category.id,
+        name: 'Es Teh Manis',
+        is_available: true,
+      });
+
+      // Act
+      const response = await request(app)
+        .patch(`/admin/menu/items/${item.id}/availability`)
+        .set('Authorization', `Bearer ${adminAccessToken}`);
+
+      // Assert
+      expect(response.status).toBe(200);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'success');
+      expect(response.body).toHaveProperty('data');
+      expect(response.body.data).toHaveProperty('id', item.id);
+      expect(response.body.data).toHaveProperty('is_available', false);
+
+      // Cleanup
+      await MenuTableTestHelper.cleanTable();
+      await UsersTableTestHelper.cleanTable();
+      await AuthenticationsTableTestHelper.cleanTable();
+    });
+
+  });
+
+  describe('when DELETE /admin/menu/items/:id', () => {
+
+    it('should response 204 when deleting item with no order references', async () => {
+      // Arrange
+      const adminAccessToken = await getAdminAccessToken();
+      const category = await MenuTableTestHelper.addCategory({
+        id: '11111111-1111-4111-8111-111111111111',
+      });
+      const item = await MenuTableTestHelper.addItem({
+        id: '22222222-2222-4222-8222-222222222222',
+        category_id: category.id,
+      });
+
+      // Act
+      const response = await request(app)
+        .delete(`/admin/menu/items/${item.id}`)
+        .set('Authorization', `Bearer ${adminAccessToken}`);
+
+      // Assert
+      expect(response.status).toBe(204);
+
+      // Cleanup
+      await MenuTableTestHelper.cleanTable();
+      await UsersTableTestHelper.cleanTable();
+      await AuthenticationsTableTestHelper.cleanTable();
+    });
+
+    it('should response 409 when deleting item referenced in order_items', async () => {
+      // Arrange
+      const adminAccessToken = await getAdminAccessToken();
+      const category = await MenuTableTestHelper.addCategory({
+        id: '11111111-1111-4111-8111-111111111111',
+      });
+      const item = await MenuTableTestHelper.addItem({
+        id: '22222222-2222-4222-8222-222222222222',
+        category_id: category.id,
+      });
+      const customer = await UsersTableTestHelper.addUser({
+        id: '00000000-0000-4000-8000-000000000002',
+        email: 'buyer.orders@example.com',
+      });
+      const order = await OrdersTableTestHelper.addOrder({
+        id: '44444444-4444-4444-8444-444444444444',
+        customer_id: customer.id,
+      });
+      await OrdersTableTestHelper.addOrderItem({
+        order_id: order.id,
+        menu_item_id: item.id,
+      });
+
+      // Act
+      const response = await request(app)
+        .delete(`/admin/menu/items/${item.id}`)
+        .set('Authorization', `Bearer ${adminAccessToken}`);
+
+      // Assert
+      expect(response.status).toBe(409);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'fail');
+      expect(response.body).toHaveProperty('message', 'Cannot delete an item that appears in existing orders. Mark it as Sold Out instead.');
+
+      // Cleanup
+      await OrdersTableTestHelper.cleanTable();
+      await MenuTableTestHelper.cleanTable();
+      await UsersTableTestHelper.cleanTable();
+      await AuthenticationsTableTestHelper.cleanTable();
+    });
+
+  });
+
+  describe('when POST /admin/tables', () => {
+
+    it('should response 201 with created table when table_number is unique', async () => {
+      // Arrange
+      const adminAccessToken = await getAdminAccessToken();
+
+      // Act
+      const response = await request(app)
+        .post('/admin/tables')
+        .set('Authorization', `Bearer ${adminAccessToken}`)
+        .send({ table_number: '12' });
+
+      // Assert
+      expect(response.status).toBe(201);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'success');
+      expect(response.body).toHaveProperty('data');
+      expect(response.body.data).toHaveProperty('id');
+      expect(response.body.data).toHaveProperty('table_number', '12');
+      expect(response.body.data).toHaveProperty('created_at');
+
+      // Cleanup
+      await TablesTableTestHelper.cleanTable();
+      await UsersTableTestHelper.cleanTable();
+      await AuthenticationsTableTestHelper.cleanTable();
+    });
+
+    it('should response 409 when table_number already exists', async () => {
+      // Arrange
+      const adminAccessToken = await getAdminAccessToken();
+      await TablesTableTestHelper.addTable({ table_number: '12' });
+
+      // Act
+      const response = await request(app)
+        .post('/admin/tables')
+        .set('Authorization', `Bearer ${adminAccessToken}`)
+        .send({ table_number: '12' });
+
+      // Assert
+      expect(response.status).toBe(409);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'fail');
+      expect(response.body).toHaveProperty('message');
+
+      // Cleanup
+      await TablesTableTestHelper.cleanTable();
+      await UsersTableTestHelper.cleanTable();
+      await AuthenticationsTableTestHelper.cleanTable();
+    });
+
+  });
+
+  describe('when DELETE /admin/tables/:id', () => {
+
+    it('should response 204 when deleting existing table', async () => {
+      // Arrange
+      const adminAccessToken = await getAdminAccessToken();
+      const table = await TablesTableTestHelper.addTable({
+        id: '33333333-3333-4333-8333-333333333333',
+        table_number: '5',
+      });
+
+      // Act
+      const response = await request(app)
+        .delete(`/admin/tables/${table.id}`)
+        .set('Authorization', `Bearer ${adminAccessToken}`);
+
+      // Assert
+      expect(response.status).toBe(204);
+
+      // Cleanup
+      await TablesTableTestHelper.cleanTable();
+      await UsersTableTestHelper.cleanTable();
+      await AuthenticationsTableTestHelper.cleanTable();
+    });
+
+  });
+
+  describe('when GET /admin/tables/:id/qrcode', () => {
+
+    it('should response 200 with PNG image and attachment header when table exists', async () => {
+      // Arrange
+      const adminAccessToken = await getAdminAccessToken();
+      const table = await TablesTableTestHelper.addTable({
+        id: '33333333-3333-4333-8333-333333333333',
+        table_number: '5',
+      });
+
+      // Act
+      const response = await request(app)
+        .get(`/admin/tables/${table.id}/qrcode`)
+        .set('Authorization', `Bearer ${adminAccessToken}`);
+
+      // Assert
+      expect(response.status).toBe(200);
+      expect(response.headers['content-type']).toMatch(/image\/png/);
+      expect(response.headers['content-disposition']).toMatch(/attachment;\s*filename="table-5-qr\.png"/);
+      expect(response.body).toBeDefined();
+
+      // Cleanup
+      await TablesTableTestHelper.cleanTable();
+      await UsersTableTestHelper.cleanTable();
+      await AuthenticationsTableTestHelper.cleanTable();
+    });
+
+  });
+
+  describe('when accessing /admin endpoints', () => {
+
+    it('should response 403 when accessed with customer JWT', async () => {
+      // Arrange
+      const customerAccessToken = await getCustomerAccessToken();
+
+      // Act
+      const response = await request(app)
+        .get('/admin/tables')
+        .set('Authorization', `Bearer ${customerAccessToken}`);
+
+      // Assert
+      expect(response.status).toBe(403);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'fail');
+      expect(response.body).toHaveProperty('message');
+
+      // Cleanup
+      await UsersTableTestHelper.cleanTable();
+      await AuthenticationsTableTestHelper.cleanTable();
+    });
+
+    it('should response 401 when accessed without Authorization header', async () => {
+      // Act
+      const response = await request(app)
+        .get('/admin/tables');
+
+      // Assert
+      expect(response.status).toBe(401);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'fail');
+      expect(response.body).toHaveProperty('message');
+    });
+
+  });
+
+  describe('when GET /menu/items (menu update reflection)', () => {
+
+    it('should response 200 with item still in list and is_available false after toggling availability', async () => {
+      // Arrange
+      const adminAccessToken = await getAdminAccessToken();
+      const category = await MenuTableTestHelper.addCategory({
+        id: '11111111-1111-4111-8111-111111111111',
+        name: 'Drinks',
+      });
+      const item = await MenuTableTestHelper.addItem({
+        id: '22222222-2222-4222-8222-222222222222',
+        category_id: category.id,
+        name: 'Es Cendol',
+        is_available: true,
+      });
+
+      // Admin toggles availability
+      await request(app)
+        .patch(`/admin/menu/items/${item.id}/availability`)
+        .set('Authorization', `Bearer ${adminAccessToken}`);
+
+      // Act
+      const response = await request(app)
+        .get('/menu/items');
+
+      // Assert
+      expect(response.status).toBe(200);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'success');
+      expect(Array.isArray(response.body.data)).toBe(true);
+
+      const foundItem = response.body.data.find((menuItem) => menuItem.id === item.id);
+      expect(foundItem).toBeDefined();
+      expect(foundItem.is_available).toBe(false);
+
+      // Cleanup
+      await MenuTableTestHelper.cleanTable();
+      await UsersTableTestHelper.cleanTable();
+      await AuthenticationsTableTestHelper.cleanTable();
+    });
+
+    it('should response 200 with newly created item immediately reflected without caching', async () => {
+      // Arrange
+      const adminAccessToken = await getAdminAccessToken();
+      const category = await MenuTableTestHelper.addCategory({
+        id: '11111111-1111-4111-8111-111111111111',
+        name: 'Food',
+      });
+
+      // Admin creates new item
+      await request(app)
+        .post('/admin/menu/items')
+        .set('Authorization', `Bearer ${adminAccessToken}`)
+        .field('name', 'Rendang Sapi Spesial')
+        .field('description', 'Slow-cooked beef rendang in rich coconut spices')
+        .field('price', 40000)
+        .field('category_id', category.id)
+        .attach('photo', Buffer.from('fake-image-content'), 'rendang.jpg');
+
+      // Act
+      const response = await request(app)
+        .get('/menu/items');
+
+      // Assert
+      expect(response.status).toBe(200);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'success');
+      expect(Array.isArray(response.body.data)).toBe(true);
+
+      const foundItem = response.body.data.find((menuItem) => menuItem.name === 'Rendang Sapi Spesial');
+      expect(foundItem).toBeDefined();
+      expect(foundItem.price).toBe(40000);
+
+      // Cleanup
+      await MenuTableTestHelper.cleanTable();
+      await UsersTableTestHelper.cleanTable();
+      await AuthenticationsTableTestHelper.cleanTable();
     });
 
   });
