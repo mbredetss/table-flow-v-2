@@ -1,4 +1,6 @@
 // File: ./src/server/_test/server.test.js
+import fs from 'fs';
+import path from 'path';
 import request from 'supertest';
 import bcrypt from 'bcrypt';
 import crypto from 'crypto';
@@ -645,6 +647,15 @@ describe('HTTP Server', () => {
 
   });
 
+  const deleteUploadedFile = (photoPath) => {
+    if (!photoPath) return;
+    const cleanPath = photoPath.startsWith('/') ? photoPath.slice(1) : photoPath;
+    const filePath = path.resolve(process.cwd(), cleanPath);
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+  };
+
   const getAdminAccessToken = async () => {
     await seedAdmin();
     const loginResponse = await request(app)
@@ -713,6 +724,7 @@ describe('HTTP Server', () => {
       expect(response.body.data).toHaveProperty('updated_at');
 
       // Cleanup
+      deleteUploadedFile(response.body?.data?.photo);
       await MenuTableTestHelper.cleanTable();
       await UsersTableTestHelper.cleanTable();
       await AuthenticationsTableTestHelper.cleanTable();
@@ -1159,7 +1171,7 @@ describe('HTTP Server', () => {
       });
 
       // Admin creates new item
-      await request(app)
+      const createResponse = await request(app)
         .post('/admin/menu/items')
         .set('Authorization', `Bearer ${adminAccessToken}`)
         .field('name', 'Rendang Sapi Spesial')
@@ -1184,6 +1196,7 @@ describe('HTTP Server', () => {
       expect(foundItem.price).toBe(40000);
 
       // Cleanup
+      deleteUploadedFile(createResponse.body?.data?.photo);
       await MenuTableTestHelper.cleanTable();
       await UsersTableTestHelper.cleanTable();
       await AuthenticationsTableTestHelper.cleanTable();
