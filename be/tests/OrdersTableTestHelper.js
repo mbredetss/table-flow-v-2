@@ -39,6 +39,24 @@ const OrdersTableTestHelper = {
     return result.rows[0];
   },
 
+  async findOrderById(id) {
+    const query = {
+      text: 'SELECT * FROM orders WHERE id = $1',
+      values: [id],
+    };
+    const result = await pool.query(query);
+    return result.rows[0] || null;
+  },
+
+  async findOrderItemsByOrderId(orderId) {
+    const query = {
+      text: 'SELECT * FROM order_items WHERE order_id = $1 ORDER BY created_at ASC',
+      values: [orderId],
+    };
+    const result = await pool.query(query);
+    return result.rows;
+  },
+
   async cleanTable() {
     await pool.query('TRUNCATE TABLE order_items, orders CASCADE');
   },

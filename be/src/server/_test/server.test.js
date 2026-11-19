@@ -667,21 +667,25 @@ describe('HTTP Server', () => {
     return loginResponse.body?.data?.accessToken;
   };
 
-  const getCustomerAccessToken = async () => {
-    const customerPassword = 'password123';
-    const hashedPassword = await bcrypt.hash(customerPassword, 12);
+  const getCustomerAccessToken = async ({
+    id = '00000000-0000-4000-8000-000000000003',
+    name = 'Customer Test',
+    email = 'customer.auth.test@example.com',
+    password = 'password123',
+  } = {}) => {
+    const hashedPassword = await bcrypt.hash(password, 12);
     await UsersTableTestHelper.addUser({
-      id: '00000000-0000-4000-8000-000000000003',
-      name: 'Customer Test',
-      email: 'customer.auth.test@example.com',
+      id,
+      name,
+      email,
       password: hashedPassword,
       role: 'customer',
     });
     const loginResponse = await request(app)
       .post('/auth/login')
       .send({
-        email: 'customer.auth.test@example.com',
-        password: customerPassword,
+        email,
+        password,
       });
     return loginResponse.body?.data?.accessToken;
   };
@@ -1198,6 +1202,530 @@ describe('HTTP Server', () => {
       // Cleanup
       deleteUploadedFile(createResponse.body?.data?.photo);
       await MenuTableTestHelper.cleanTable();
+      await UsersTableTestHelper.cleanTable();
+      await AuthenticationsTableTestHelper.cleanTable();
+    });
+
+  });
+
+  describe('when POST /orders', () => {
+
+    it('should response 201 with created order details when request payload is valid', async () => {
+      // Arrange
+      const customerAccessToken = await getCustomerAccessToken();
+      const category = await MenuTableTestHelper.addCategory({
+        id: '11111111-1111-4111-8111-111111111111',
+        name: 'Food',
+      });
+      const item = await MenuTableTestHelper.addItem({
+        id: '22222222-2222-4222-8222-222222222222',
+        category_id: category.id,
+        name: 'Ayam Geprek',
+        price: 25000,
+        is_available: true,
+      });
+
+      const requestPayload = {
+        table_number: '12',
+        payment_reference: 'ORDER-PAY-001',
+        items: [
+          {
+            menu_item_id: item.id,
+            quantity: 2,
+            note: 'extra spicy',
+          },
+        ],
+      };
+
+      // Act
+      const response = await request(app)
+        .post('/orders')
+        .set('Authorization', `Bearer ${customerAccessToken}`)
+        .send(requestPayload);
+
+      // Assert
+      expect(response.status).toBe(201);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'success');
+      expect(response.body).toHaveProperty('data');
+      expect(response.body.data).toHaveProperty('order_id');
+      expect(typeof response.body.data.order_id).toBe('string');
+      expect(response.body.data).toHaveProperty('status', 'pending');
+      expect(response.body.data).toHaveProperty('total_price', 50000);
+
+      // Cleanup
+      await OrdersTableTestHelper.cleanTable();
+      await MenuTableTestHelper.cleanTable();
+      await UsersTableTestHelper.cleanTable();
+      await AuthenticationsTableTestHelper.cleanTable();
+    });
+
+    it('should response 201 and snapshot unit_price in order_items correctly even when menu item price later changes', async () => {
+      // Arrange
+      const customerAccessToken = await getCustomerAccessToken();
+      const category = await MenuTableTestHelper.addCategory({
+        id: '11111111-1111-4111-8111-111111111111',
+        name: 'Food',
+      });
+      const item = await MenuTableTestHelper.addItem({
+        id: '22222222-2222-4222-8222-222222222222',
+        category_id: category.id,
+        name: 'Nasi Bakar',
+        price: 25000,
+        is_available: true,
+      });
+
+      const requestPayload = {
+        table_number: '12',
+        payment_reference: 'ORDER-PAY-008',
+        items: [
+          {
+            menu_item_id: item.id,
+            quantity: 2,
+          },
+        ],
+      };
+
+      // Act 1: Place order at initial price 25000
+      const response = await request(app)
+        .post('/orders')
+        .set('Authorization', `Bearer ${customerAccessToken}`)
+        .send(requestPayload);
+
+      // Act 2: Later update menu item price to 35000
+      await MenuTableTestHelper.updateItemPrice(item.id, 35000);
+
+      // Assert: Historical unit_price snapshot in order_items is still 25000
+      expect(response.status).toBe(201);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'success');
+      expect(response.body.data).toHaveProperty('total_price', 50000);
+
+      const orderItems = await OrdersTableTestHelper.findOrderItemsByOrderId(response.body.data.order_id);
+      expect(orderItems).toHaveLength(1);
+      expect(orderItems[0].unit_price).toBe(25000);
+
+      // Cleanup
+      await OrdersTableTestHelper.cleanTable();
+      await MenuTableTestHelper.cleanTable();
+      await UsersTableTestHelper.cleanTable();
+      await AuthenticationsTableTestHelper.cleanTable();
+    });
+
+    it('should response 401 when Authorization header is missing', async () => {
+      // Act
+      const response = await request(app)
+        .post('/orders')
+        .send({
+          table_number: '12',
+          payment_reference: 'ORDER-PAY-002',
+          items: [
+            {
+              menu_item_id: '22222222-2222-4222-8222-222222222222',
+              quantity: 1,
+            },
+          ],
+        });
+
+      // Assert
+      expect(response.status).toBe(401);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'fail');
+      expect(response.body).toHaveProperty('message');
+    });
+
+    it('should response 400 when items array is empty', async () => {
+      // Arrange
+      const customerAccessToken = await getCustomerAccessToken();
+
+      // Act
+      const response = await request(app)
+        .post('/orders')
+        .set('Authorization', `Bearer ${customerAccessToken}`)
+        .send({
+          table_number: '12',
+          payment_reference: 'ORDER-PAY-003',
+          items: [],
+        });
+
+      // Assert
+      expect(response.status).toBe(400);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'fail');
+      expect(response.body).toHaveProperty('message');
+
+      // Cleanup
+      await UsersTableTestHelper.cleanTable();
+      await AuthenticationsTableTestHelper.cleanTable();
+    });
+
+    it('should response 400 when table_number is missing', async () => {
+      // Arrange
+      const customerAccessToken = await getCustomerAccessToken();
+      const category = await MenuTableTestHelper.addCategory({
+        id: '11111111-1111-4111-8111-111111111111',
+      });
+      const item = await MenuTableTestHelper.addItem({
+        id: '22222222-2222-4222-8222-222222222222',
+        category_id: category.id,
+      });
+
+      // Act
+      const response = await request(app)
+        .post('/orders')
+        .set('Authorization', `Bearer ${customerAccessToken}`)
+        .send({
+          payment_reference: 'ORDER-PAY-004',
+          items: [
+            {
+              menu_item_id: item.id,
+              quantity: 1,
+            },
+          ],
+        });
+
+      // Assert
+      expect(response.status).toBe(400);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'fail');
+      expect(response.body).toHaveProperty('message');
+
+      // Cleanup
+      await MenuTableTestHelper.cleanTable();
+      await UsersTableTestHelper.cleanTable();
+      await AuthenticationsTableTestHelper.cleanTable();
+    });
+
+    it('should response 400 when item quantity is 0', async () => {
+      // Arrange
+      const customerAccessToken = await getCustomerAccessToken();
+      const category = await MenuTableTestHelper.addCategory({
+        id: '11111111-1111-4111-8111-111111111111',
+      });
+      const item = await MenuTableTestHelper.addItem({
+        id: '22222222-2222-4222-8222-222222222222',
+        category_id: category.id,
+      });
+
+      // Act
+      const response = await request(app)
+        .post('/orders')
+        .set('Authorization', `Bearer ${customerAccessToken}`)
+        .send({
+          table_number: '12',
+          payment_reference: 'ORDER-PAY-009',
+          items: [
+            {
+              menu_item_id: item.id,
+              quantity: 0,
+            },
+          ],
+        });
+
+      // Assert
+      expect(response.status).toBe(400);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'fail');
+      expect(response.body).toHaveProperty('message');
+
+      // Cleanup
+      await MenuTableTestHelper.cleanTable();
+      await UsersTableTestHelper.cleanTable();
+      await AuthenticationsTableTestHelper.cleanTable();
+    });
+
+    it('should response 400 when note exceeds 255 characters', async () => {
+      // Arrange
+      const customerAccessToken = await getCustomerAccessToken();
+      const category = await MenuTableTestHelper.addCategory({
+        id: '11111111-1111-4111-8111-111111111111',
+      });
+      const item = await MenuTableTestHelper.addItem({
+        id: '22222222-2222-4222-8222-222222222222',
+        category_id: category.id,
+      });
+      const longNote = 'a'.repeat(256);
+
+      // Act
+      const response = await request(app)
+        .post('/orders')
+        .set('Authorization', `Bearer ${customerAccessToken}`)
+        .send({
+          table_number: '12',
+          payment_reference: 'ORDER-PAY-010',
+          items: [
+            {
+              menu_item_id: item.id,
+              quantity: 1,
+              note: longNote,
+            },
+          ],
+        });
+
+      // Assert
+      expect(response.status).toBe(400);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'fail');
+      expect(response.body).toHaveProperty('message');
+
+      // Cleanup
+      await MenuTableTestHelper.cleanTable();
+      await UsersTableTestHelper.cleanTable();
+      await AuthenticationsTableTestHelper.cleanTable();
+    });
+
+    it('should response 404 when menu_item_id does not exist', async () => {
+      // Arrange
+      const customerAccessToken = await getCustomerAccessToken();
+      const nonExistentMenuItemId = '00000000-0000-0000-0000-000000000000';
+
+      // Act
+      const response = await request(app)
+        .post('/orders')
+        .set('Authorization', `Bearer ${customerAccessToken}`)
+        .send({
+          table_number: '12',
+          payment_reference: 'ORDER-PAY-005',
+          items: [
+            {
+              menu_item_id: nonExistentMenuItemId,
+              quantity: 1,
+            },
+          ],
+        });
+
+      // Assert
+      expect(response.status).toBe(404);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'fail');
+      expect(response.body).toHaveProperty('message');
+
+      // Cleanup
+      await UsersTableTestHelper.cleanTable();
+      await AuthenticationsTableTestHelper.cleanTable();
+    });
+
+    it('should response 422 with item name when menu item is sold out', async () => {
+      // Arrange
+      const customerAccessToken = await getCustomerAccessToken();
+      const category = await MenuTableTestHelper.addCategory({
+        id: '11111111-1111-4111-8111-111111111111',
+      });
+      const item = await MenuTableTestHelper.addItem({
+        id: '22222222-2222-4222-8222-222222222222',
+        category_id: category.id,
+        name: 'Es Cendol',
+        is_available: false,
+      });
+
+      // Act
+      const response = await request(app)
+        .post('/orders')
+        .set('Authorization', `Bearer ${customerAccessToken}`)
+        .send({
+          table_number: '12',
+          payment_reference: 'ORDER-PAY-006',
+          items: [
+            {
+              menu_item_id: item.id,
+              quantity: 1,
+            },
+          ],
+        });
+
+      // Assert
+      expect(response.status).toBe(422);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'fail');
+      expect(response.body).toHaveProperty('message');
+      expect(response.body.message).toContain('Es Cendol');
+
+      // Cleanup
+      await MenuTableTestHelper.cleanTable();
+      await UsersTableTestHelper.cleanTable();
+      await AuthenticationsTableTestHelper.cleanTable();
+    });
+
+    it('should response 409 when payment_reference is duplicate', async () => {
+      // Arrange
+      const customerAccessToken = await getCustomerAccessToken();
+      const category = await MenuTableTestHelper.addCategory({
+        id: '11111111-1111-4111-8111-111111111111',
+      });
+      const item = await MenuTableTestHelper.addItem({
+        id: '22222222-2222-4222-8222-222222222222',
+        category_id: category.id,
+      });
+      await OrdersTableTestHelper.addOrder({
+        id: '44444444-4444-4444-8444-444444444444',
+        payment_reference: 'ORDER-PAY-DUPLICATE',
+      });
+
+      // Act
+      const response = await request(app)
+        .post('/orders')
+        .set('Authorization', `Bearer ${customerAccessToken}`)
+        .send({
+          table_number: '12',
+          payment_reference: 'ORDER-PAY-DUPLICATE',
+          items: [
+            {
+              menu_item_id: item.id,
+              quantity: 1,
+            },
+          ],
+        });
+
+      // Assert
+      expect(response.status).toBe(409);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'fail');
+      expect(response.body).toHaveProperty('message');
+
+      // Cleanup
+      await OrdersTableTestHelper.cleanTable();
+      await MenuTableTestHelper.cleanTable();
+      await UsersTableTestHelper.cleanTable();
+      await AuthenticationsTableTestHelper.cleanTable();
+    });
+
+    // TODO: No test case covers AC — "can add a menu item to cart from the item detail screen"
+    // TODO: No test case covers AC — "cart badge updates to reflect the total number of items"
+    // TODO: No test case covers AC — "can adjust item quantity in the cart (increase, decrease, remove)"
+    // TODO: No test case covers AC — "cart screen shows all items with quantities, notes, and total price"
+    // TODO: No test case covers AC — "tapping 'Checkout' proceeds to payment screen"
+    // TODO: No test case covers AC — "sold-out items are displayed with a Sold Out badge; the Add to Cart button is disabled — items are not hidden"
+
+  });
+
+  describe('when GET /orders/:id', () => {
+
+    it('should response 200 with full order detail when requested by owning customer', async () => {
+      // Arrange
+      const customerId = '00000000-0000-4000-8000-000000000003';
+      const customerAccessToken = await getCustomerAccessToken({ id: customerId });
+      const category = await MenuTableTestHelper.addCategory({
+        id: '11111111-1111-4111-8111-111111111111',
+      });
+      const item = await MenuTableTestHelper.addItem({
+        id: '22222222-2222-4222-8222-222222222222',
+        category_id: category.id,
+        price: 25000,
+      });
+      const order = await OrdersTableTestHelper.addOrder({
+        id: '44444444-4444-4444-8444-444444444444',
+        customer_id: customerId,
+        table_number: '12',
+        payment_reference: 'ORDER-PAY-011',
+        total_price: 25000,
+        status: 'pending',
+      });
+      await OrdersTableTestHelper.addOrderItem({
+        id: '55555555-5555-4555-8555-555555555555',
+        order_id: order.id,
+        menu_item_id: item.id,
+        quantity: 1,
+        note: 'extra lime',
+        unit_price: 25000,
+      });
+
+      // Act
+      const response = await request(app)
+        .get(`/orders/${order.id}`)
+        .set('Authorization', `Bearer ${customerAccessToken}`);
+
+      // Assert
+      expect(response.status).toBe(200);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'success');
+      expect(response.body).toHaveProperty('data');
+      expect(response.body.data).toHaveProperty('id', order.id);
+      expect(response.body.data).toHaveProperty('customer_id', customerId);
+      expect(response.body.data).toHaveProperty('table_number', '12');
+      expect(response.body.data).toHaveProperty('status', 'pending');
+      expect(response.body.data).toHaveProperty('total_price', 25000);
+      expect(response.body.data).toHaveProperty('payment_reference', 'ORDER-PAY-011');
+      expect(response.body.data).toHaveProperty('created_at');
+      expect(response.body.data).toHaveProperty('updated_at');
+      expect(Array.isArray(response.body.data.items)).toBe(true);
+      expect(response.body.data.items).toHaveLength(1);
+      expect(response.body.data.items[0]).toHaveProperty('id');
+      expect(response.body.data.items[0]).toHaveProperty('order_id', order.id);
+      expect(response.body.data.items[0]).toHaveProperty('menu_item_id', item.id);
+      expect(response.body.data.items[0]).toHaveProperty('quantity', 1);
+      expect(response.body.data.items[0]).toHaveProperty('note', 'extra lime');
+      expect(response.body.data.items[0]).toHaveProperty('unit_price', 25000);
+      expect(response.body.data.items[0]).toHaveProperty('created_at');
+
+      // Cleanup
+      await OrdersTableTestHelper.cleanTable();
+      await MenuTableTestHelper.cleanTable();
+      await UsersTableTestHelper.cleanTable();
+      await AuthenticationsTableTestHelper.cleanTable();
+    });
+
+    it('should response 403 when requested by a different authenticated customer', async () => {
+      // Arrange
+      const customerAId = '00000000-0000-4000-8000-000000000003';
+      const order = await OrdersTableTestHelper.addOrder({
+        id: '44444444-4444-4444-8444-444444444444',
+        customer_id: customerAId,
+        table_number: '12',
+      });
+
+      const customerBToken = await getCustomerAccessToken({
+        id: '00000000-0000-4000-8000-000000000004',
+        email: 'customer.other@example.com',
+        name: 'Customer Other',
+      });
+
+      // Act
+      const response = await request(app)
+        .get(`/orders/${order.id}`)
+        .set('Authorization', `Bearer ${customerBToken}`);
+
+      // Assert
+      expect(response.status).toBe(403);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'fail');
+      expect(response.body).toHaveProperty('message');
+
+      // Cleanup
+      await OrdersTableTestHelper.cleanTable();
+      await UsersTableTestHelper.cleanTable();
+      await AuthenticationsTableTestHelper.cleanTable();
+    });
+
+    it('should response 404 when order id does not exist', async () => {
+      // Arrange
+      const customerAccessToken = await getCustomerAccessToken();
+      const nonExistentOrderId = '00000000-0000-0000-0000-000000000000';
+
+      // Act
+      const response = await request(app)
+        .get(`/orders/${nonExistentOrderId}`)
+        .set('Authorization', `Bearer ${customerAccessToken}`);
+
+      // Assert
+      expect(response.status).toBe(404);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'fail');
+      expect(response.body).toHaveProperty('message');
+
+      // Cleanup
       await UsersTableTestHelper.cleanTable();
       await AuthenticationsTableTestHelper.cleanTable();
     });
