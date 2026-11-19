@@ -12,6 +12,7 @@ import AuthenticationsTableTestHelper from '../../../tests/AuthenticationsTableT
 import MenuTableTestHelper from '../../../tests/MenuTableTestHelper.js';
 import TablesTableTestHelper from '../../../tests/TablesTableTestHelper.js';
 import OrdersTableTestHelper from '../../../tests/OrdersTableTestHelper.js';
+import PaymentsTableTestHelper from '../../../tests/PaymentsTableTestHelper.js';
 import seedAdmin from '../../../scripts/seed-admin.js';
 
 describe('HTTP Server', () => {
@@ -1664,5 +1665,553 @@ describe('HTTP Server', () => {
     });
 
   });
+
+  // NOTE (TDD): PaymentsTableTestHelper must be created at tests/PaymentsTableTestHelper.js
+  // before running these tests. It needs: addPayment(), findPaymentById(), cleanTable()
+
+  describe('when POST /payments/initiate', () => {
+    let customerAccessToken;
+    let category;
+    let item;
+
+    beforeAll(async () => {
+      customerAccessToken = await getCustomerAccessToken();
+      category = await MenuTableTestHelper.addCategory({
+        id: '11111111-1111-4111-8111-111111111111',
+        name: 'Food',
+      });
+      item = await MenuTableTestHelper.addItem({
+        id: '22222222-2222-4222-8222-222222222222',
+        category_id: category.id,
+        name: 'Ayam Geprek',
+        price: 25000,
+        is_available: true,
+      });
+    });
+
+    afterAll(async () => {
+      await PaymentsTableTestHelper.cleanTable();
+      await MenuTableTestHelper.cleanTable();
+      await UsersTableTestHelper.cleanTable();
+      await AuthenticationsTableTestHelper.cleanTable();
+    });
+
+    afterEach(async () => {
+      await PaymentsTableTestHelper.cleanTable();
+    });
+
+    it('should response 201 with payment details when payload is valid', async () => {
+      // Arrange
+      const requestPayload = {
+        amount: 50000,
+        table_number: '12',
+        items: [
+          {
+            menu_item_id: item.id,
+            quantity: 2,
+            note: 'extra spicy',
+          },
+        ],
+      };
+
+      // Act
+      const response = await request(app)
+        .post('/payments/initiate')
+        .set('Authorization', `Bearer ${customerAccessToken}`)
+        .send(requestPayload);
+
+      // Assert
+      expect(response.status).toBe(201);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'success');
+      expect(response.body).toHaveProperty('data');
+      expect(response.body.data).toHaveProperty('payment_id');
+      expect(typeof response.body.data.payment_id).toBe('string');
+      expect(response.body.data).toHaveProperty('qris_url');
+      expect(typeof response.body.data.qris_url).toBe('string');
+      expect(response.body.data).toHaveProperty('expires_at');
+      expect(typeof response.body.data.expires_at).toBe('string');
+    });
+
+    it('should response 201 with a new payment_id and new QRIS code when called again after expiry with same cart contents', async () => {
+      // Arrange
+      const requestPayload = {
+        amount: 50000,
+        table_number: '12',
+        items: [
+          {
+            menu_item_id: item.id,
+            quantity: 2,
+          },
+        ],
+      };
+
+      // Act 1: Initial call
+      const firstResponse = await request(app)
+        .post('/payments/initiate')
+        .set('Authorization', `Bearer ${customerAccessToken}`)
+        .send(requestPayload);
+
+      // Act 2: Re-initiate with same cart
+      const secondResponse = await request(app)
+        .post('/payments/initiate')
+        .set('Authorization', `Bearer ${customerAccessToken}`)
+        .send(requestPayload);
+
+      // Assert
+      expect(secondResponse.status).toBe(201);
+      expect(secondResponse.headers['content-type']).toMatch(/application\/json/);
+      expect(secondResponse.body).toBeTypeOf('object');
+      expect(secondResponse.body).toHaveProperty('status', 'success');
+      expect(secondResponse.body).toHaveProperty('data');
+      expect(secondResponse.body.data).toHaveProperty('payment_id');
+      expect(secondResponse.body.data).toHaveProperty('qris_url');
+      expect(secondResponse.body.data).toHaveProperty('expires_at');
+      expect(secondResponse.body.data.payment_id).not.toBe(firstResponse.body?.data?.payment_id);
+    });
+
+    it('should response 400 when amount is tampered and does not match server-computed total', async () => {
+      // Arrange
+      const requestPayload = {
+        amount: 10000, // expected 50000
+        table_number: '12',
+        items: [
+          {
+            menu_item_id: item.id,
+            quantity: 2,
+          },
+        ],
+      };
+
+      // Act
+      const response = await request(app)
+        .post('/payments/initiate')
+        .set('Authorization', `Bearer ${customerAccessToken}`)
+        .send(requestPayload);
+
+      // Assert
+      expect(response.status).toBe(400);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'fail');
+      expect(response.body).toHaveProperty('message');
+    });
+
+    it('should response 400 when items is empty', async () => {
+      // Arrange
+      const requestPayload = {
+        amount: 50000,
+        table_number: '12',
+        items: [],
+      };
+
+      // Act
+      const response = await request(app)
+        .post('/payments/initiate')
+        .set('Authorization', `Bearer ${customerAccessToken}`)
+        .send(requestPayload);
+
+      // Assert
+      expect(response.status).toBe(400);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'fail');
+      expect(response.body).toHaveProperty('message');
+    });
+
+    it('should response 401 when Authorization header is missing', async () => {
+      // Arrange
+      const requestPayload = {
+        amount: 50000,
+        table_number: '12',
+        items: [
+          {
+            menu_item_id: item.id,
+            quantity: 2,
+          },
+        ],
+      };
+
+      // Act
+      const response = await request(app)
+        .post('/payments/initiate')
+        .send(requestPayload);
+
+      // Assert
+      expect(response.status).toBe(401);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'fail');
+      expect(response.body).toHaveProperty('message');
+    });
+
+    it('should response 502 with gateway-unavailable message when Midtrans API is unavailable', async () => {
+      // Arrange: Midtrans error simulation
+      // NOTE (TDD): Developer will mock the Midtrans API client / service to simulate gateway error/rejection
+      const requestPayload = {
+        amount: 50000,
+        table_number: '12',
+        items: [
+          {
+            menu_item_id: item.id,
+            quantity: 2,
+          },
+        ],
+      };
+
+      // Act
+      const response = await request(app)
+        .post('/payments/initiate')
+        .set('Authorization', `Bearer ${customerAccessToken}`)
+        .set('X-Simulate-Gateway-Error', 'true')
+        .send(requestPayload);
+
+      // Assert
+      expect(response.status).toBe(502);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'fail');
+      expect(response.body).toHaveProperty('message', 'Payment gateway is unreachable. Please try again.');
+    });
+
+  });
+
+  describe('when POST /payments/webhook', () => {
+    let customerId;
+    let category;
+    let item;
+    const serverKey = process.env.MIDTRANS_SERVER_KEY || 'test-midtrans-server-key';
+
+    const generateSignature = (orderId, statusCode, grossAmount) => {
+      return crypto
+        .createHash('sha512')
+        .update(`${orderId}${statusCode}${grossAmount}${serverKey}`)
+        .digest('hex');
+    };
+
+    beforeAll(async () => {
+      customerId = '00000000-0000-4000-8000-000000000003';
+      await UsersTableTestHelper.addUser({
+        id: customerId,
+        name: 'Customer Webhook Test',
+        email: 'customer.webhook@example.com',
+        role: 'customer',
+      });
+      category = await MenuTableTestHelper.addCategory({
+        id: '11111111-1111-4111-8111-111111111112',
+        name: 'Beverage',
+      });
+      item = await MenuTableTestHelper.addItem({
+        id: '22222222-2222-4222-8222-222222222223',
+        category_id: category.id,
+        name: 'Iced Tea',
+        price: 15000,
+      });
+    });
+
+    afterAll(async () => {
+      await OrdersTableTestHelper.cleanTable();
+      await PaymentsTableTestHelper.cleanTable();
+      await MenuTableTestHelper.cleanTable();
+      await UsersTableTestHelper.cleanTable();
+    });
+
+    afterEach(async () => {
+      await OrdersTableTestHelper.cleanTable();
+      await PaymentsTableTestHelper.cleanTable();
+    });
+
+    it('should response 200, mark payment as paid, and create order when settlement payload has valid signature', async () => {
+      // Arrange
+      const midtransOrderId = 'TF-00000000-0000-4000-8000-000000000001';
+      const payment = await PaymentsTableTestHelper.addPayment({
+        id: '77777777-7777-4777-8777-777777777771',
+        customer_id: customerId,
+        midtrans_order_id: midtransOrderId,
+        amount: 30000,
+        status: 'pending',
+        cart_snapshot: {
+          table_number: '5',
+          items: [
+            {
+              menu_item_id: item.id,
+              quantity: 2,
+              note: 'less sugar',
+            },
+          ],
+        },
+      });
+
+      const payload = {
+        order_id: midtransOrderId,
+        status_code: '200',
+        gross_amount: '30000.00',
+        transaction_status: 'settlement',
+        signature_key: generateSignature(midtransOrderId, '200', '30000.00'),
+      };
+
+      // Act
+      const response = await request(app)
+        .post('/payments/webhook')
+        .send(payload);
+
+      // Assert
+      expect(response.status).toBe(200);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'success');
+
+      // Verify payment status updated in DB
+      const updatedPayment = await PaymentsTableTestHelper.findPaymentById(payment.id);
+      expect(updatedPayment.status).toBe('paid');
+      expect(updatedPayment.order_id).toBeTruthy();
+
+      // Verify order created in DB
+      const order = await OrdersTableTestHelper.findOrderById(updatedPayment.order_id);
+      expect(order).toBeDefined();
+      expect(order.customer_id).toBe(customerId);
+      expect(order.table_number).toBe('5');
+    });
+
+    it('should response 200 and not create duplicate order when settlement is sent twice', async () => {
+      // Arrange
+      const midtransOrderId = 'TF-00000000-0000-4000-8000-000000000002';
+      const existingOrder = await OrdersTableTestHelper.addOrder({
+        id: '44444444-4444-4444-8444-444444444445',
+        customer_id: customerId,
+        table_number: '5',
+        payment_reference: midtransOrderId,
+        total_price: 30000,
+        status: 'pending',
+      });
+
+      await PaymentsTableTestHelper.addPayment({
+        id: '77777777-7777-4777-8777-777777777772',
+        customer_id: customerId,
+        midtrans_order_id: midtransOrderId,
+        amount: 30000,
+        status: 'paid',
+        order_id: existingOrder.id,
+        cart_snapshot: {
+          table_number: '5',
+          items: [{ menu_item_id: item.id, quantity: 2 }],
+        },
+      });
+
+      const payload = {
+        order_id: midtransOrderId,
+        status_code: '200',
+        gross_amount: '30000.00',
+        transaction_status: 'settlement',
+        signature_key: generateSignature(midtransOrderId, '200', '30000.00'),
+      };
+
+      // Act
+      const response = await request(app)
+        .post('/payments/webhook')
+        .send(payload);
+
+      // Assert
+      expect(response.status).toBe(200);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'success');
+
+      // Verify no duplicate order created
+      const order = await OrdersTableTestHelper.findOrderById(existingOrder.id);
+      expect(order).toBeDefined();
+    });
+
+    it('should response 200, mark payment as expired, and not create order when status is expire', async () => {
+      // Arrange
+      const midtransOrderId = 'TF-00000000-0000-4000-8000-000000000003';
+      const payment = await PaymentsTableTestHelper.addPayment({
+        id: '77777777-7777-4777-8777-777777777773',
+        customer_id: customerId,
+        midtrans_order_id: midtransOrderId,
+        amount: 30000,
+        status: 'pending',
+        cart_snapshot: {
+          table_number: '5',
+          items: [{ menu_item_id: item.id, quantity: 2 }],
+        },
+      });
+
+      const payload = {
+        order_id: midtransOrderId,
+        status_code: '200',
+        gross_amount: '30000.00',
+        transaction_status: 'expire',
+        signature_key: generateSignature(midtransOrderId, '200', '30000.00'),
+      };
+
+      // Act
+      const response = await request(app)
+        .post('/payments/webhook')
+        .send(payload);
+
+      // Assert
+      expect(response.status).toBe(200);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'success');
+
+      const updatedPayment = await PaymentsTableTestHelper.findPaymentById(payment.id);
+      expect(updatedPayment.status).toBe('expired');
+      expect(updatedPayment.order_id).toBeNull();
+    });
+
+    it('should response 200, mark payment as failed, and not create order when status is cancel or deny', async () => {
+      // Arrange
+      const midtransOrderId = 'TF-00000000-0000-4000-8000-000000000004';
+      const payment = await PaymentsTableTestHelper.addPayment({
+        id: '77777777-7777-4777-8777-777777777774',
+        customer_id: customerId,
+        midtrans_order_id: midtransOrderId,
+        amount: 30000,
+        status: 'pending',
+        cart_snapshot: {
+          table_number: '5',
+          items: [{ menu_item_id: item.id, quantity: 2 }],
+        },
+      });
+
+      const payload = {
+        order_id: midtransOrderId,
+        status_code: '200',
+        gross_amount: '30000.00',
+        transaction_status: 'cancel',
+        signature_key: generateSignature(midtransOrderId, '200', '30000.00'),
+      };
+
+      // Act
+      const response = await request(app)
+        .post('/payments/webhook')
+        .send(payload);
+
+      // Assert
+      expect(response.status).toBe(200);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'success');
+
+      const updatedPayment = await PaymentsTableTestHelper.findPaymentById(payment.id);
+      expect(updatedPayment.status).toBe('failed');
+      expect(updatedPayment.order_id).toBeNull();
+    });
+
+    it('should response 400 when signature is invalid', async () => {
+      // Arrange
+      const payload = {
+        order_id: 'TF-00000000-0000-4000-8000-000000000005',
+        status_code: '200',
+        gross_amount: '30000.00',
+        transaction_status: 'settlement',
+        signature_key: 'invalid-signature-hash-value',
+      };
+
+      // Act
+      const response = await request(app)
+        .post('/payments/webhook')
+        .send(payload);
+
+      // Assert
+      expect(response.status).toBe(400);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'fail');
+      expect(response.body).toHaveProperty('message', 'Invalid signature');
+    });
+
+  });
+
+  describe('when GET /payments/:payment_id/status', () => {
+    let customerId;
+    let customerAccessToken;
+    let otherCustomerAccessToken;
+    let payment;
+
+    beforeAll(async () => {
+      customerId = '00000000-0000-4000-8000-000000000003';
+      customerAccessToken = await getCustomerAccessToken({
+        id: customerId,
+        name: 'Customer Status Test',
+        email: 'customer.status@example.com',
+      });
+      otherCustomerAccessToken = await getCustomerAccessToken({
+        id: '00000000-0000-4000-8000-000000000004',
+        name: 'Customer Other Status',
+        email: 'customer.other.status@example.com',
+      });
+
+      payment = await PaymentsTableTestHelper.addPayment({
+        id: '77777777-7777-4777-8777-777777777775',
+        customer_id: customerId,
+        midtrans_order_id: 'TF-00000000-0000-4000-8000-000000000006',
+        amount: 25000,
+        status: 'pending',
+        cart_snapshot: { table_number: '1', items: [] },
+      });
+    });
+
+    afterAll(async () => {
+      await PaymentsTableTestHelper.cleanTable();
+      await UsersTableTestHelper.cleanTable();
+      await AuthenticationsTableTestHelper.cleanTable();
+    });
+
+    it('should response 200 with payment status while awaiting payment', async () => {
+      // Act
+      const response = await request(app)
+        .get(`/payments/${payment.id}/status`)
+        .set('Authorization', `Bearer ${customerAccessToken}`);
+
+      // Assert
+      expect(response.status).toBe(200);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'success');
+      expect(response.body).toHaveProperty('data');
+      expect(response.body.data).toHaveProperty('payment_id', payment.id);
+      expect(response.body.data).toHaveProperty('status', 'pending');
+    });
+
+    it('should response 403 when payment is polled by a different customer', async () => {
+      // Act
+      const response = await request(app)
+        .get(`/payments/${payment.id}/status`)
+        .set('Authorization', `Bearer ${otherCustomerAccessToken}`);
+
+      // Assert
+      expect(response.status).toBe(403);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'fail');
+      expect(response.body).toHaveProperty('message');
+    });
+
+    it('should response 404 when payment_id does not exist', async () => {
+      // Arrange
+      const nonExistentPaymentId = '00000000-0000-0000-0000-000000000000';
+
+      // Act
+      const response = await request(app)
+        .get(`/payments/${nonExistentPaymentId}/status`)
+        .set('Authorization', `Bearer ${customerAccessToken}`);
+
+      // Assert
+      expect(response.status).toBe(404);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'fail');
+      expect(response.body).toHaveProperty('message');
+    });
+
+  });
+
+  // TODO: No test case covers AC — "payment success screen shows order number and confirmation message"
+  // TODO: No test case covers AC — "QRIS code expires after 15 minutes — a countdown timer is displayed"
+  // TODO: No test case covers AC — "cart is not cleared after a payment timeout — customer can retry from the same cart"
 
 });
