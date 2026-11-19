@@ -5,6 +5,7 @@ import request from 'supertest';
 import bcrypt from 'bcrypt';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
+import { vi } from 'vitest';
 import app from '../index.js';
 import authenticate from '../../middlewares/authenticate.js';
 import UsersTableTestHelper from '../../../tests/UsersTableTestHelper.js';
@@ -14,6 +15,29 @@ import TablesTableTestHelper from '../../../tests/TablesTableTestHelper.js';
 import OrdersTableTestHelper from '../../../tests/OrdersTableTestHelper.js';
 import PaymentsTableTestHelper from '../../../tests/PaymentsTableTestHelper.js';
 import seedAdmin from '../../../scripts/seed-admin.js';
+
+const { mockMidtransCharge } = vi.hoisted(() => ({
+  mockMidtransCharge: vi.fn(),
+}));
+
+vi.mock('midtrans-client', () => {
+  class CoreApi {
+    constructor(config) {
+      this.config = config;
+    }
+
+    charge(payload) {
+      return mockMidtransCharge(payload);
+    }
+  }
+
+  return {
+    default: {
+      CoreApi,
+    },
+    CoreApi,
+  };
+});
 
 describe('HTTP Server', () => {
 
@@ -1700,6 +1724,24 @@ describe('HTTP Server', () => {
       await PaymentsTableTestHelper.cleanTable();
     });
 
+    beforeEach(() => {
+      mockMidtransCharge.mockResolvedValue({
+        status_code: '201',
+        actions: [
+          {
+            name: 'generate-qr-code',
+            method: 'GET',
+            url: 'https://api.sandbox.midtrans.com/v2/qris/mock-qris.png',
+          },
+          {
+            name: 'deeplink-redirect',
+            method: 'GET',
+            url: 'https://api.sandbox.midtrans.com/v2/qris/mock-deeplink.png',
+          },
+        ],
+      });
+    });
+
     it('should response 201 with payment details when payload is valid', async () => {
       // Arrange
       const requestPayload = {
@@ -1848,7 +1890,8 @@ describe('HTTP Server', () => {
 
     it('should response 502 with gateway-unavailable message when Midtrans API is unavailable', async () => {
       // Arrange: Midtrans error simulation
-      // NOTE (TDD): Developer will mock the Midtrans API client / service to simulate gateway error/rejection
+      mockMidtransCharge.mockRejectedValueOnce(new Error('Payment gateway timeout'));
+
       const requestPayload = {
         amount: 50000,
         table_number: '12',
@@ -1864,7 +1907,6 @@ describe('HTTP Server', () => {
       const response = await request(app)
         .post('/payments/initiate')
         .set('Authorization', `Bearer ${customerAccessToken}`)
-        .set('X-Simulate-Gateway-Error', 'true')
         .send(requestPayload);
 
       // Assert
