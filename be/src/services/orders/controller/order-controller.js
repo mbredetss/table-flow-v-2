@@ -145,11 +145,18 @@ export const updateOrderStatus = async (req, res) => {
   await orderRepositories.updateOrderStatus(id, status);
   const updatedOrder = await orderRepositories.getOrderById(id);
 
-  sseBroker.broadcast('order_status_updated', {
+  const payload = {
     order_id: id,
     new_status: status,
     updated_at: updatedOrder.updated_at,
-  });
+  };
+
+  sseBroker.broadcast('order_status_updated', payload);
+  sseBroker.sendToOrder(id, 'order_status_updated', payload);
+
+  if (status === 'completed') {
+    sseBroker.sendToOrder(id, 'order_completed', { order_id: id });
+  }
 
   return response(res, 200, null, updatedOrder);
 };
