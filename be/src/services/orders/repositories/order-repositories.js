@@ -48,7 +48,7 @@ class OrderRepositories {
 
   async getOrderById(id) {
     const query = `
-      SELECT o.id, o.customer_id, o.table_number, o.total_price,
+      SELECT o.id, o.customer_id, o.table_number, o.total_price, o.status, 
              o.payment_reference, o.created_at, o.updated_at,
               json_agg(
                 json_build_object(

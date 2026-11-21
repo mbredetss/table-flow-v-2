@@ -8,12 +8,13 @@ const OrdersTableTestHelper = {
     customer_id = '00000000-0000-4000-8000-000000000001',
     table_number = '1',
     payment_reference = 'PAY-TEST-001',
-    total_price = 25000,
+    total_price = 25000, 
+    status = 'pending',
   } = {}) {
     const query = {
-      text: `INSERT INTO orders (id, customer_id, table_number, payment_reference, total_price)
-             VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      values: [id, customer_id, table_number, payment_reference, total_price],
+      text: `INSERT INTO orders (id, customer_id, table_number, payment_reference, total_price, status)
+             VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      values: [id, customer_id, table_number, payment_reference, total_price, status],
     };
 
     const result = await pool.query(query);
