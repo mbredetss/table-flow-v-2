@@ -1,7 +1,7 @@
 import crypto from 'crypto';
-import { TokenManager } from '../security/token-manager.js';
-import { response } from '../utils/index.js';
-import sseBroker from './broker.js';
+import { TokenManager } from '../../../security/token-manager.js';
+import { response } from '../../../utils/index.js';
+import sseBroker from '../broker/broker.js';
 
 export const authenticateSse = (req, res, next) => {
   const token = req.query.token;

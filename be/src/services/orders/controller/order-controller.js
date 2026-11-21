@@ -3,7 +3,7 @@ import menuRepositories from '../../menu/repositories/menu-repositories.js';
 import midtransClient from '../../payments/payment gateway/mid-trans-client.js';
 import paymentRepositories from '../../payments/repositories/payment-repositories.js';
 import orderRepositories from '../repositories/order-repositories.js';
-import sseBroker from '../../../sse/broker.js';
+import sseBroker from '../../sse/broker/broker.js';
 
 export const createOrder = async (req, res) => {
   const customer_id = req.user.id;

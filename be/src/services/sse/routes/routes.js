@@ -1,5 +1,5 @@
 import express from 'express';
-import { authenticateSse, subscribeDashboardSse } from './controller.js';
+import { authenticateSse, subscribeDashboardSse } from '../controller/controller.js';
 
 const router = express.Router();
 

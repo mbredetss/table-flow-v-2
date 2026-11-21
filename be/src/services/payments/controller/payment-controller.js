@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import { response } from '../../../utils/index.js';
 import orderRepositories from '../../orders/repositories/order-repositories.js';
 import paymentRepositories from '../repositories/payment-repositories.js';
-import sseBroker from '../../../sse/broker.js';
+import sseBroker from '../../sse/broker/broker.js';
 
 export const handleWebhook = async (req, res) => {
   const { order_id, transaction_status, gross_amount, signature_key, status_code } = req.validated;

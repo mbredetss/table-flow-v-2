@@ -6,7 +6,7 @@ import adminMenu from '../services/menu/routes/admin-routes.js';
 import adminTables from '../services/tables/routes/index.js';
 import orders from '../services/orders/routes/index.js';
 import payments from '../services/payments/routes/index.js';
-import sse from '../sse/routes.js';
+import sse from '../services/sse/routes/routes.js';
 import authenticate from '../middlewares/authenticate.js';
 import authorize from '../middlewares/authorize.js';
 
