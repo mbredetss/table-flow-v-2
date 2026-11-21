@@ -25,11 +25,6 @@ export const up = (pgm) => {
       type: 'TEXT',
       notNull: true,
     },
-    status: {
-      type: 'TEXT',
-      notNull: true,
-      default: 'pending',
-    },
     total_price: {
       type: 'INTEGER',
       notNull: true,
