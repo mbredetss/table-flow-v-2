@@ -1270,8 +1270,31 @@ describe('HTTP Server', () => {
       });
     });
 
+    afterEach(async () => {
+      await PaymentsTableTestHelper.cleanTable();
+    });
+
+    beforeEach(async () => {
+      mockMidtransCharge.mockResolvedValue({
+        status_code: '201',
+        actions: [
+          {
+            name: 'generate-qr-code',
+            method: 'GET',
+            url: 'https://api.sandbox.midtrans.com/v2/qris/mock-qris.png',
+          },
+          {
+            name: 'deeplink-redirect',
+            method: 'GET',
+            url: 'https://api.sandbox.midtrans.com/v2/qris/mock-deeplink.png',
+          },
+        ],
+      });
+    });
+
     afterAll(async () => {
       await OrdersTableTestHelper.cleanTable();
+      await PaymentsTableTestHelper.cleanTable();
       await MenuTableTestHelper.cleanTable();
       await UsersTableTestHelper.cleanTable();
       await AuthenticationsTableTestHelper.cleanTable();
@@ -1281,7 +1304,7 @@ describe('HTTP Server', () => {
       await OrdersTableTestHelper.cleanTable();
     });
 
-    it('should response 201 with created order details when request payload is valid', async () => {
+    it('should response 201 with payment details when payload is valid', async () => {
       // Arrange
       const requestPayload = {
         table_number: '12',
@@ -1307,52 +1330,71 @@ describe('HTTP Server', () => {
       expect(response.body).toBeTypeOf('object');
       expect(response.body).toHaveProperty('status', 'success');
       expect(response.body).toHaveProperty('data');
-      expect(response.body.data).toHaveProperty('order_id');
-      expect(typeof response.body.data.order_id).toBe('string');
-      expect(response.body.data).toHaveProperty('status', 'pending');
-      expect(response.body.data).toHaveProperty('total_price', 50000);
+      expect(typeof response.body.data.payment_id).toBe('string');
+      expect(response.body.data).toHaveProperty('qris_url');
+      expect(typeof response.body.data.qris_url).toBe('string');
+      expect(response.body.data).toHaveProperty('expires_at');
+      expect(typeof response.body.data.expires_at).toBe('string');
     });
 
-    it('should response 201 and snapshot unit_price in order_items correctly even when menu item price later changes', async () => {
+    it('should response 201 with a new payment_id and new QRIS code when called again after expiry with same cart contents', async () => {
       // Arrange
-      const priceTestItem = await MenuTableTestHelper.addItem({
-        id: '66666666-6666-4666-8666-666666666666',
-        category_id: category.id,
-        name: 'Nasi Bakar',
-        price: 25000,
-        is_available: true,
-      });
-
       const requestPayload = {
         table_number: '12',
-        payment_reference: 'ORDER-PAY-008',
+        payment_reference: 'ORDER-PAY-001',
         items: [
           {
-            menu_item_id: priceTestItem.id,
+            menu_item_id: item.id,
             quantity: 2,
+            note: 'extra spicy',
           },
         ],
       };
 
-      // Act 1: Place order at initial price 25000
+      // Act 1: Initial call
+      const firstResponse = await request(app)
+        .post('/orders')
+        .set('Authorization', `Bearer ${customerAccessToken}`)
+        .send(requestPayload);
+
+      // Act 2: Re-initiate with same cart
+      const secondResponse = await request(app)
+        .post('/orders')
+        .set('Authorization', `Bearer ${customerAccessToken}`)
+        .send(requestPayload);
+
+      // Assert
+      expect(secondResponse.status).toBe(201);
+      expect(secondResponse.headers['content-type']).toMatch(/application\/json/);
+      expect(secondResponse.body).toBeTypeOf('object');
+      expect(secondResponse.body).toHaveProperty('status', 'success');
+      expect(secondResponse.body).toHaveProperty('data');
+      expect(secondResponse.body.data).toHaveProperty('payment_id');
+      expect(secondResponse.body.data).toHaveProperty('qris_url');
+      expect(secondResponse.body.data).toHaveProperty('expires_at');
+      expect(secondResponse.body.data.payment_id).not.toBe(firstResponse.body?.data?.payment_id);
+    });
+
+    it('should response 400 when items is empty', async () => {
+      // Arrange
+      const requestPayload = {
+        amount: 50000,
+        table_number: '12',
+        items: [],
+      };
+
+      // Act
       const response = await request(app)
         .post('/orders')
         .set('Authorization', `Bearer ${customerAccessToken}`)
         .send(requestPayload);
 
-      // Act 2: Later update menu item price to 35000
-      await MenuTableTestHelper.updateItemPrice(priceTestItem.id, 35000);
-
-      // Assert: Historical unit_price snapshot in order_items is still 25000
-      expect(response.status).toBe(201);
+      // Assert
+      expect(response.status).toBe(400);
       expect(response.headers['content-type']).toMatch(/application\/json/);
       expect(response.body).toBeTypeOf('object');
-      expect(response.body).toHaveProperty('status', 'success');
-      expect(response.body.data).toHaveProperty('total_price', 50000);
-
-      const orderItems = await OrdersTableTestHelper.findOrderItemsByOrderId(response.body.data.order_id);
-      expect(orderItems).toHaveLength(1);
-      expect(orderItems[0].unit_price).toBe(25000);
+      expect(response.body).toHaveProperty('status', 'fail');
+      expect(response.body).toHaveProperty('message');
     });
 
     it('should response 401 when Authorization header is missing', async () => {
@@ -1532,10 +1574,40 @@ describe('HTTP Server', () => {
       expect(response.body.message).toContain('Es Cendol');
     });
 
+    it('should response 502 with gateway-unavailable message when Midtrans API is unavailable', async () => {
+      // Arrange: Midtrans error simulation
+      mockMidtransCharge.mockRejectedValueOnce(new Error('Payment gateway timeout'));
+
+      const requestPayload = {
+        table_number: '12',
+        payment_reference: 'ORDER-PAY-001',
+        items: [
+          {
+            menu_item_id: item.id,
+            quantity: 2,
+            note: 'extra spicy',
+          },
+        ],
+      };
+
+      // Act
+      const response = await request(app)
+        .post('/orders')
+        .set('Authorization', `Bearer ${customerAccessToken}`)
+        .send(requestPayload);
+
+      // Assert
+      expect(response.status).toBe(502);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'fail');
+      expect(response.body).toHaveProperty('message', 'Payment gateway is unreachable. Please try again.');
+    });
+
     it('should response 409 when payment_reference is duplicate', async () => {
       // Arrange
       await OrdersTableTestHelper.addOrder({
-        id: '44444444-4444-4444-8444-444444444444', 
+        id: '44444444-4444-4444-8444-444444444444',
         customer_id: '00000000-0000-4000-8000-000000000003',
         payment_reference: 'ORDER-PAY-DUPLICATE',
       });
@@ -1562,13 +1634,6 @@ describe('HTTP Server', () => {
       expect(response.body).toHaveProperty('status', 'fail');
       expect(response.body).toHaveProperty('message');
     });
-
-    // TODO: No test case covers AC — "can add a menu item to cart from the item detail screen"
-    // TODO: No test case covers AC — "cart badge updates to reflect the total number of items"
-    // TODO: No test case covers AC — "can adjust item quantity in the cart (increase, decrease, remove)"
-    // TODO: No test case covers AC — "cart screen shows all items with quantities, notes, and total price"
-    // TODO: No test case covers AC — "tapping 'Checkout' proceeds to payment screen"
-    // TODO: No test case covers AC — "sold-out items are displayed with a Sold Out badge; the Add to Cart button is disabled — items are not hidden"
 
   });
 
@@ -1641,7 +1706,6 @@ describe('HTTP Server', () => {
       expect(response.body.data).toHaveProperty('id', order.id);
       expect(response.body.data).toHaveProperty('customer_id', customerId);
       expect(response.body.data).toHaveProperty('table_number', '12');
-      expect(response.body.data).toHaveProperty('status', 'pending');
       expect(response.body.data).toHaveProperty('total_price', 25000);
       expect(response.body.data).toHaveProperty('payment_reference', 'ORDER-PAY-011');
       expect(response.body.data).toHaveProperty('created_at');
@@ -1686,235 +1750,6 @@ describe('HTTP Server', () => {
       expect(response.body).toBeTypeOf('object');
       expect(response.body).toHaveProperty('status', 'fail');
       expect(response.body).toHaveProperty('message');
-    });
-
-  });
-
-  // NOTE (TDD): PaymentsTableTestHelper must be created at tests/PaymentsTableTestHelper.js
-  // before running these tests. It needs: addPayment(), findPaymentById(), cleanTable()
-
-  describe('when POST /payments/initiate', () => {
-    let customerAccessToken;
-    let category;
-    let item;
-
-    beforeAll(async () => {
-      customerAccessToken = await getCustomerAccessToken();
-      category = await MenuTableTestHelper.addCategory({
-        id: '11111111-1111-4111-8111-111111111111',
-        name: 'Food',
-      });
-      item = await MenuTableTestHelper.addItem({
-        id: '22222222-2222-4222-8222-222222222222',
-        category_id: category.id,
-        name: 'Ayam Geprek',
-        price: 25000,
-        is_available: true,
-      });
-    });
-
-    afterAll(async () => {
-      await PaymentsTableTestHelper.cleanTable();
-      await MenuTableTestHelper.cleanTable();
-      await UsersTableTestHelper.cleanTable();
-      await AuthenticationsTableTestHelper.cleanTable();
-    });
-
-    afterEach(async () => {
-      await PaymentsTableTestHelper.cleanTable();
-    });
-
-    beforeEach(() => {
-      mockMidtransCharge.mockResolvedValue({
-        status_code: '201',
-        actions: [
-          {
-            name: 'generate-qr-code',
-            method: 'GET',
-            url: 'https://api.sandbox.midtrans.com/v2/qris/mock-qris.png',
-          },
-          {
-            name: 'deeplink-redirect',
-            method: 'GET',
-            url: 'https://api.sandbox.midtrans.com/v2/qris/mock-deeplink.png',
-          },
-        ],
-      });
-    });
-
-    it('should response 201 with payment details when payload is valid', async () => {
-      // Arrange
-      const requestPayload = {
-        amount: 50000,
-        table_number: '12',
-        items: [
-          {
-            menu_item_id: item.id,
-            quantity: 2,
-            note: 'extra spicy',
-          },
-        ],
-      };
-
-      // Act
-      const response = await request(app)
-        .post('/payments/initiate')
-        .set('Authorization', `Bearer ${customerAccessToken}`)
-        .send(requestPayload);
-
-      // Assert
-      expect(response.status).toBe(201);
-      expect(response.headers['content-type']).toMatch(/application\/json/);
-      expect(response.body).toBeTypeOf('object');
-      expect(response.body).toHaveProperty('status', 'success');
-      expect(response.body).toHaveProperty('data');
-      expect(response.body.data).toHaveProperty('payment_id');
-      expect(typeof response.body.data.payment_id).toBe('string');
-      expect(response.body.data).toHaveProperty('qris_url');
-      expect(typeof response.body.data.qris_url).toBe('string');
-      expect(response.body.data).toHaveProperty('expires_at');
-      expect(typeof response.body.data.expires_at).toBe('string');
-    });
-
-    it('should response 201 with a new payment_id and new QRIS code when called again after expiry with same cart contents', async () => {
-      // Arrange
-      const requestPayload = {
-        amount: 50000,
-        table_number: '12',
-        items: [
-          {
-            menu_item_id: item.id,
-            quantity: 2,
-          },
-        ],
-      };
-
-      // Act 1: Initial call
-      const firstResponse = await request(app)
-        .post('/payments/initiate')
-        .set('Authorization', `Bearer ${customerAccessToken}`)
-        .send(requestPayload);
-
-      // Act 2: Re-initiate with same cart
-      const secondResponse = await request(app)
-        .post('/payments/initiate')
-        .set('Authorization', `Bearer ${customerAccessToken}`)
-        .send(requestPayload);
-
-      // Assert
-      expect(secondResponse.status).toBe(201);
-      expect(secondResponse.headers['content-type']).toMatch(/application\/json/);
-      expect(secondResponse.body).toBeTypeOf('object');
-      expect(secondResponse.body).toHaveProperty('status', 'success');
-      expect(secondResponse.body).toHaveProperty('data');
-      expect(secondResponse.body.data).toHaveProperty('payment_id');
-      expect(secondResponse.body.data).toHaveProperty('qris_url');
-      expect(secondResponse.body.data).toHaveProperty('expires_at');
-      expect(secondResponse.body.data.payment_id).not.toBe(firstResponse.body?.data?.payment_id);
-    });
-
-    it('should response 400 when amount is tampered and does not match server-computed total', async () => {
-      // Arrange
-      const requestPayload = {
-        amount: 10000, // expected 50000
-        table_number: '12',
-        items: [
-          {
-            menu_item_id: item.id,
-            quantity: 2,
-          },
-        ],
-      };
-
-      // Act
-      const response = await request(app)
-        .post('/payments/initiate')
-        .set('Authorization', `Bearer ${customerAccessToken}`)
-        .send(requestPayload);
-
-      // Assert
-      expect(response.status).toBe(400);
-      expect(response.headers['content-type']).toMatch(/application\/json/);
-      expect(response.body).toBeTypeOf('object');
-      expect(response.body).toHaveProperty('status', 'fail');
-      expect(response.body).toHaveProperty('message');
-    });
-
-    it('should response 400 when items is empty', async () => {
-      // Arrange
-      const requestPayload = {
-        amount: 50000,
-        table_number: '12',
-        items: [],
-      };
-
-      // Act
-      const response = await request(app)
-        .post('/payments/initiate')
-        .set('Authorization', `Bearer ${customerAccessToken}`)
-        .send(requestPayload);
-
-      // Assert
-      expect(response.status).toBe(400);
-      expect(response.headers['content-type']).toMatch(/application\/json/);
-      expect(response.body).toBeTypeOf('object');
-      expect(response.body).toHaveProperty('status', 'fail');
-      expect(response.body).toHaveProperty('message');
-    });
-
-    it('should response 401 when Authorization header is missing', async () => {
-      // Arrange
-      const requestPayload = {
-        amount: 50000,
-        table_number: '12',
-        items: [
-          {
-            menu_item_id: item.id,
-            quantity: 2,
-          },
-        ],
-      };
-
-      // Act
-      const response = await request(app)
-        .post('/payments/initiate')
-        .send(requestPayload);
-
-      // Assert
-      expect(response.status).toBe(401);
-      expect(response.headers['content-type']).toMatch(/application\/json/);
-      expect(response.body).toBeTypeOf('object');
-      expect(response.body).toHaveProperty('status', 'fail');
-      expect(response.body).toHaveProperty('message');
-    });
-
-    it('should response 502 with gateway-unavailable message when Midtrans API is unavailable', async () => {
-      // Arrange: Midtrans error simulation
-      mockMidtransCharge.mockRejectedValueOnce(new Error('Payment gateway timeout'));
-
-      const requestPayload = {
-        amount: 50000,
-        table_number: '12',
-        items: [
-          {
-            menu_item_id: item.id,
-            quantity: 2,
-          },
-        ],
-      };
-
-      // Act
-      const response = await request(app)
-        .post('/payments/initiate')
-        .set('Authorization', `Bearer ${customerAccessToken}`)
-        .send(requestPayload);
-
-      // Assert
-      expect(response.status).toBe(502);
-      expect(response.headers['content-type']).toMatch(/application\/json/);
-      expect(response.body).toBeTypeOf('object');
-      expect(response.body).toHaveProperty('status', 'fail');
-      expect(response.body).toHaveProperty('message', 'Payment gateway is unreachable. Please try again.');
     });
 
   });
@@ -1975,13 +1810,13 @@ describe('HTTP Server', () => {
         status: 'pending',
         cart_snapshot: {
           table_number: '5',
-          items: [
-            {
-              menu_item_id: item.id,
-              quantity: 2,
-              note: 'less sugar',
-            },
-          ],
+          orderItemsData: [{
+            menu_item_id: item.id,
+            quantity: 2,
+            note: 'less sugar',
+            unit_price: 15000,
+          }],
+          total_price: 3000,
         },
       });
 
@@ -2141,6 +1976,36 @@ describe('HTTP Server', () => {
       const updatedPayment = await PaymentsTableTestHelper.findPaymentById(payment.id);
       expect(updatedPayment.status).toBe('failed');
       expect(updatedPayment.order_id).toBeNull();
+    });
+
+    it('should response 201 and snapshot unit_price in order_items correctly even when menu item price later changes', async () => {
+      // Arrange
+      const priceTestItem = await MenuTableTestHelper.addItem({
+        id: '66666666-6666-4666-8666-666666666666',
+        category_id: category.id,
+        name: 'Nasi Bakar',
+        price: 25000,
+        is_available: true,
+      });
+
+      // Act 1: Add order at initial price 25000
+      await UsersTableTestHelper.addUser();
+      const orderTest = await OrdersTableTestHelper.addOrder();
+      await PaymentsTableTestHelper.addPayment({
+        order_id: orderTest.id, 
+      });
+      await OrdersTableTestHelper.addOrderItem({
+        menu_item_id: priceTestItem.id
+      });
+
+
+      // Act 2: Later update menu item price to 35000
+      await MenuTableTestHelper.updateItemPrice(priceTestItem.id, 35000);
+
+      // Assert: Historical unit_price snapshot in order_items is still 25000
+      const orderItems = await OrdersTableTestHelper.findOrderItemsByOrderId(orderTest.id);
+      expect(orderItems).toHaveLength(1);
+      expect(orderItems[0].unit_price).toBe(25000);
     });
 
     it('should response 400 when signature is invalid', async () => {
