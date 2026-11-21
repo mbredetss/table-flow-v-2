@@ -17,9 +17,9 @@ class OrderRepositories {
 
   async createOrder(client, { customer_id, table_number, payment_reference, total_price }) {
     const query = `
-      INSERT INTO orders (customer_id, table_number, payment_reference, total_price, status)
-      VALUES ($1, $2, $3, $4, 'pending')
-      RETURNING id, status, total_price
+      INSERT INTO orders (customer_id, table_number, payment_reference, total_price)
+      VALUES ($1, $2, $3, $4)
+      RETURNING id, total_price
     `;
     const result = await client.query(query, [
       customer_id,
@@ -48,7 +48,7 @@ class OrderRepositories {
 
   async getOrderById(id) {
     const query = `
-      SELECT o.id, o.customer_id, o.table_number, o.status, o.total_price,
+      SELECT o.id, o.customer_id, o.table_number, o.total_price,
              o.payment_reference, o.created_at, o.updated_at,
               json_agg(
                 json_build_object(

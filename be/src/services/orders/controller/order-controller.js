@@ -1,5 +1,7 @@
 import { response } from '../../../utils/index.js';
 import menuRepositories from '../../menu/repositories/menu-repositories.js';
+import midtransClient from '../../payments/payment gateway/mid-trans-client.js';
+import paymentRepositories from '../../payments/repositories/payment-repositories.js';
 import orderRepositories from '../repositories/order-repositories.js';
 
 export const createOrder = async (req, res) => {
@@ -38,40 +40,47 @@ export const createOrder = async (req, res) => {
     });
   }
 
-  // Open database transaction
-  const pool = orderRepositories.getPool();
-  const client = await pool.connect();
+  // Build Midtrans order ID
+  const midtrans_order_id = `TF-${crypto.randomUUID()}`;
 
+  // Call Midtrans Core API
+  let qris_url;
   try {
-    await client.query('BEGIN');
-
-    const createdOrder = await orderRepositories.createOrder(client, {
-      customer_id,
-      table_number,
-      payment_reference,
-      total_price,
+    const chargeResponse = await midtransClient.charge({
+      payment_type: 'qris',
+      transaction_details: {
+        order_id: midtrans_order_id,
+        gross_amount: total_price,
+      },
     });
 
-    for (const itemData of orderItemsData) {
-      await orderRepositories.createOrderItem(client, {
-        order_id: createdOrder.id,
-        ...itemData,
-      });
+    if (process.env.NODE_ENV !== 'production') {
+      qris_url = chargeResponse.actions[0].url;
+    } else {
+      qris_url = chargeResponse.actions[1].url;
     }
-
-    await client.query('COMMIT');
-
-    return response(res, 201, null, {
-      order_id: createdOrder.id,
-      status: createdOrder.status,
-      total_price: createdOrder.total_price,
-    });
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
+  } catch {
+    return response(res, 502, 'Payment gateway is unreachable. Please try again.', null);
   }
+
+  const expires_at = new Date(Date.now() + 15 * 60 * 1000);
+
+  const cart_snapshot = { table_number, orderItemsData, total_price };
+
+  const payment = await paymentRepositories.insert({
+    customer_id,
+    midtrans_order_id,
+    amount: total_price,
+    qris_url,
+    cart_snapshot,
+    expires_at,
+  });
+
+  return response(res, 201, null, {
+    payment_id: payment.id,
+    qris_url,
+    expires_at: payment.expires_at,
+  });
 };
 
 export const getOrderById = async (req, res) => {
