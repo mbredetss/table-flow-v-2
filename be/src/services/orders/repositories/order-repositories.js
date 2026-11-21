@@ -69,6 +69,42 @@ class OrderRepositories {
     const result = await this.pool.query(query, [id]);
     return result.rows[0] || null;
   }
+
+  async getActiveOrders() {
+    const query = `
+      SELECT o.id, o.customer_id, o.table_number, o.total_price, o.status, 
+             o.payment_reference, o.created_at, o.updated_at,
+              json_agg(
+                json_build_object(
+                  'id', oi.id,
+                  'order_id', oi.order_id,
+                  'menu_item_id', oi.menu_item_id,
+                  'quantity', oi.quantity,
+                  'note', oi.note,
+                  'unit_price', oi.unit_price,
+                  'created_at', oi.created_at
+                ) ORDER BY oi.created_at ASC
+              ) AS items
+      FROM orders o
+      JOIN order_items oi ON o.id = oi.order_id
+      WHERE o.status != 'completed'
+      GROUP BY o.id
+      ORDER BY o.created_at ASC
+    `;
+    const result = await this.pool.query(query);
+    return result.rows;
+  }
+
+  async updateOrderStatus(id, status) {
+    const query = `
+      UPDATE orders
+      SET status = $1, updated_at = NOW()
+      WHERE id = $2
+      RETURNING *
+    `;
+    const result = await this.pool.query(query, [status, id]);
+    return result.rows[0] || null;
+  }
 }
 
 export default new OrderRepositories();

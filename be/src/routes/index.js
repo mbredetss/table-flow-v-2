@@ -6,6 +6,7 @@ import adminMenu from '../services/menu/routes/admin-routes.js';
 import adminTables from '../services/tables/routes/index.js';
 import orders from '../services/orders/routes/index.js';
 import payments from '../services/payments/routes/index.js';
+import sse from '../sse/routes.js';
 import authenticate from '../middlewares/authenticate.js';
 import authorize from '../middlewares/authorize.js';
 
@@ -14,8 +15,9 @@ const router = express.Router();
 router.use('/users', users);
 router.use('/auth', authentications);
 router.use('/menu', menu);
-router.use('/orders', authenticate, authorize('customer'), orders);
+router.use('/orders', orders);
 router.use('/payments', payments);
+router.use('/sse', sse);
 
 router.use('/admin', authenticate, authorize('admin'));
 router.use('/admin/menu', adminMenu);

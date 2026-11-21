@@ -14,3 +14,10 @@ export const createOrderSchema = Joi.object({
     )
     .required(),
 });
+
+export const updateOrderStatusSchema = Joi.object({
+  status: Joi.string()
+    .valid('preparing', 'ready', 'completed')
+    .required(),
+});
+

@@ -3,6 +3,7 @@ import menuRepositories from '../../menu/repositories/menu-repositories.js';
 import midtransClient from '../../payments/payment gateway/mid-trans-client.js';
 import paymentRepositories from '../../payments/repositories/payment-repositories.js';
 import orderRepositories from '../repositories/order-repositories.js';
+import sseBroker from '../../../sse/broker.js';
 
 export const createOrder = async (req, res) => {
   const customer_id = req.user.id;
@@ -101,3 +102,55 @@ export const getOrderById = async (req, res) => {
 
   return response(res, 200, null, order);
 };
+
+export const getActiveOrders = async (req, res) => {
+  const orders = await orderRepositories.getActiveOrders();
+  const grouped = {
+    pending: [],
+    preparing: [],
+    ready: [],
+  };
+
+  for (const order of orders) {
+    if (grouped[order.status]) {
+      grouped[order.status].push(order);
+    }
+  }
+
+  return response(res, 200, null, grouped);
+};
+
+export const updateOrderStatus = async (req, res) => {
+  const { id } = req.params;
+  const { status } = req.validated;
+
+  let order;
+  try {
+    order = await orderRepositories.getOrderById(id);
+  } catch (err) {
+    if (err.code === '22P02') order = null;
+    else throw err;
+  }
+
+  if (!order) return response(res, 404, 'Order not found', null);
+
+  const ALLOWED_TRANSITIONS = {
+    pending: 'preparing',
+    preparing: 'ready',
+    ready: 'completed',
+  };
+
+  if (ALLOWED_TRANSITIONS[order.status] !== status) return response(res, 422, `Invalid status transition from '${order.status}' to '${status}'.`);
+
+  await orderRepositories.updateOrderStatus(id, status);
+  const updatedOrder = await orderRepositories.getOrderById(id);
+
+  sseBroker.broadcast('order_status_updated', {
+    order_id: id,
+    new_status: status,
+    updated_at: updatedOrder.updated_at,
+  });
+
+  return response(res, 200, null, updatedOrder);
+};
+

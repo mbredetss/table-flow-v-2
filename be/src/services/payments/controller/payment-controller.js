@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { response } from '../../../utils/index.js';
 import orderRepositories from '../../orders/repositories/order-repositories.js';
 import paymentRepositories from '../repositories/payment-repositories.js';
+import sseBroker from '../../../sse/broker.js';
 
 export const handleWebhook = async (req, res) => {
   const { order_id, transaction_status, gross_amount, signature_key, status_code } = req.validated;
@@ -37,11 +38,12 @@ export const handleWebhook = async (req, res) => {
 
     await paymentRepositories.updateStatus(client, payment.id, internalStatus);
 
+    let createdOrder;
     // Create order only on settlement and only if not already created (idempotency)
     if (transaction_status === 'settlement' && !payment.order_id) {
       const { table_number, orderItemsData, total_price } = payment.cart_snapshot;
 
-      const createdOrder = await orderRepositories.createOrder(client, {
+      createdOrder = await orderRepositories.createOrder(client, {
         customer_id: payment.customer_id,
         table_number,
         payment_reference: payment.midtrans_order_id,
@@ -59,6 +61,12 @@ export const handleWebhook = async (req, res) => {
     }
 
     await client.query('COMMIT');
+
+    if (createdOrder) {
+      const fullOrder = await orderRepositories.getOrderById(createdOrder.id);
+      sseBroker.broadcast('new_order', fullOrder);
+    }
+
     return response(res, 200, null, { status: 'acknowledged' });
   } catch (err) {
     await client.query('ROLLBACK');
