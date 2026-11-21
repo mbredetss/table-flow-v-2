@@ -2015,7 +2015,7 @@ describe('HTTP Server', () => {
       await UsersTableTestHelper.addUser();
       const orderTest = await OrdersTableTestHelper.addOrder();
       await PaymentsTableTestHelper.addPayment({
-        order_id: orderTest.id, 
+        order_id: orderTest.id,
       });
       await OrdersTableTestHelper.addOrderItem({
         menu_item_id: priceTestItem.id
@@ -2435,6 +2435,14 @@ describe('HTTP Server', () => {
       await AuthenticationsTableTestHelper.cleanTable();
     });
 
+    const serverKey = process.env.MIDTRANS_SERVER_KEY
+    const generateSignature = (orderId, statusCode, grossAmount) => {
+      return crypto
+        .createHash('sha512')
+        .update(`${orderId}${statusCode}${grossAmount}${serverKey}`)
+        .digest('hex');
+    };
+
     it('should response 200 with text/event-stream and keep connection open when token is valid cashier JWT', async () => {
       // Act & Assert
       await new Promise((resolve, reject) => {
@@ -2444,6 +2452,7 @@ describe('HTTP Server', () => {
           .buffer(false);
 
         sseRequest.on('response', (res) => {
+          res.on('error', () => { });
           try {
             expect(res.status).toBe(200);
             expect(res.headers['content-type']).toMatch(/text\/event-stream/);
@@ -2459,25 +2468,20 @@ describe('HTTP Server', () => {
           if (sseRequest.aborted) return;
           reject(err);
         });
+
+        sseRequest.end();
       });
     });
 
-    it('should receive new_order event with full order payload on connected cashier SSE client after order is placed', async () => {
+    it('should receive new_order event with full order payload on connected cashier SSE client after order is placed and payed', async () => {
       // Arrange
-      const requestPayload = {
-        table_number: '8',
-        payment_reference: 'ORDER-PAY-SSE-02',
-        items: [
-          {
-            menu_item_id: item.id,
-            quantity: 1,
-            note: 'extra mayo',
-          },
-        ],
-      };
-
       let sseResponse = null;
       let receivedChunk = '';
+
+      let sseConnected;
+      const connectedPromise = new Promise((resolve) => {
+        sseConnected = resolve;
+      });
 
       const ssePromise = new Promise((resolve, reject) => {
         const sseRequest = request(app)
@@ -2488,10 +2492,11 @@ describe('HTTP Server', () => {
         const timeout = setTimeout(() => {
           sseRequest.abort();
           resolve();
-        }, 3000);
+        }, 5000);
 
         sseRequest.on('response', (res) => {
           sseResponse = res;
+          res.on('error', () => { });
           if (res.status !== 200) {
             clearTimeout(timeout);
             sseRequest.abort();
@@ -2500,7 +2505,10 @@ describe('HTTP Server', () => {
 
           res.on('data', (chunk) => {
             receivedChunk += chunk.toString();
-            if (receivedChunk.includes('event: new_order')) {
+            if (receivedChunk.includes(': connected')) {
+              sseConnected();
+            }
+            if (receivedChunk.includes('event: new_order') && receivedChunk.includes('data:')) {
               clearTimeout(timeout);
               sseRequest.abort();
               resolve();
@@ -2513,18 +2521,49 @@ describe('HTTP Server', () => {
           clearTimeout(timeout);
           reject(err);
         });
+
+        sseRequest.end();
       });
+
+      await connectedPromise;
+
+      // Act
+      const midtransOrderId = 'TF-00000000-0000-4000-8000-000000000001';
+      await PaymentsTableTestHelper.addPayment({
+        id: '77777777-7777-4777-8777-777777777771',
+        customer_id: customerId,
+        midtrans_order_id: midtransOrderId,
+        amount: 30000,
+        status: 'pending',
+        cart_snapshot: {
+          table_number: '5',
+          orderItemsData: [{
+            menu_item_id: item.id,
+            quantity: 2,
+            note: 'less sugar',
+            unit_price: 15000,
+          }],
+          total_price: 3000,
+        },
+      });
+
+      const payload = {
+        order_id: midtransOrderId,
+        status_code: '200',
+        gross_amount: '30000.00',
+        transaction_status: 'settlement',
+        signature_key: generateSignature(midtransOrderId, '200', '30000.00'),
+      };
 
       // Act
       const postResponse = await request(app)
-        .post('/orders')
-        .set('Authorization', `Bearer ${customerAccessToken}`)
-        .send(requestPayload);
+        .post('/payments/webhook')
+        .send(payload);
 
       await ssePromise;
 
       // Assert
-      expect(postResponse.status).toBe(201);
+      expect(postResponse.status).toBe(200);
       expect(sseResponse).not.toBeNull();
       expect(sseResponse.status).toBe(200);
       expect(sseResponse.headers['content-type']).toMatch(/text\/event-stream/);
@@ -2631,6 +2670,11 @@ describe('HTTP Server', () => {
       let sseResponse = null;
       let receivedChunk = '';
 
+      let sseConnected;
+      const connectedPromise = new Promise((resolve) => {
+        sseConnected = resolve;
+      });
+
       const ssePromise = new Promise((resolve, reject) => {
         const sseRequest = request(app)
           .get('/sse/dashboard')
@@ -2640,10 +2684,11 @@ describe('HTTP Server', () => {
         const timeout = setTimeout(() => {
           sseRequest.abort();
           resolve();
-        }, 3000);
+        }, 5000);
 
         sseRequest.on('response', (res) => {
           sseResponse = res;
+          res.on('error', () => { });
           if (res.status !== 200) {
             clearTimeout(timeout);
             sseRequest.abort();
@@ -2652,7 +2697,10 @@ describe('HTTP Server', () => {
 
           res.on('data', (chunk) => {
             receivedChunk += chunk.toString();
-            if (receivedChunk.includes('event: order_status_updated')) {
+            if (receivedChunk.includes(': connected')) {
+              sseConnected();
+            }
+            if (receivedChunk.includes('event: order_status_updated') && receivedChunk.includes('data:')) {
               clearTimeout(timeout);
               sseRequest.abort();
               resolve();
@@ -2665,7 +2713,11 @@ describe('HTTP Server', () => {
           clearTimeout(timeout);
           reject(err);
         });
+
+        sseRequest.end();
       });
+
+      await connectedPromise;
 
       // Act
       const response = await request(app)
