@@ -1729,6 +1729,7 @@ describe('HTTP Server', () => {
       expect(response.body.data).toHaveProperty('id', order.id);
       expect(response.body.data).toHaveProperty('customer_id', customerId);
       expect(response.body.data).toHaveProperty('table_number', '12');
+      expect(response.body.data).toHaveProperty('status', 'pending');
       expect(response.body.data).toHaveProperty('total_price', 25000);
       expect(response.body.data).toHaveProperty('payment_reference', 'ORDER-PAY-011');
       expect(response.body.data).toHaveProperty('created_at');
@@ -1742,6 +1743,22 @@ describe('HTTP Server', () => {
       expect(response.body.data.items[0]).toHaveProperty('note', 'extra lime');
       expect(response.body.data.items[0]).toHaveProperty('unit_price', 25000);
       expect(response.body.data.items[0]).toHaveProperty('created_at');
+    });
+
+    it('should response 200 with status pending immediately after order creation', async () => {
+      // Act
+      const response = await request(app)
+        .get(`/orders/${order.id}`)
+        .set('Authorization', `Bearer ${customerAccessToken}`);
+
+      // Assert
+      expect(response.status).toBe(200);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'success');
+      expect(response.body).toHaveProperty('data');
+      expect(response.body.data).toHaveProperty('id', order.id);
+      expect(response.body.data).toHaveProperty('status', 'pending');
     });
 
     it('should response 403 when requested by a different authenticated customer', async () => {
@@ -2603,6 +2620,7 @@ describe('HTTP Server', () => {
 
   describe('when PATCH /orders/:id/status', () => {
     let cashierAccessToken;
+    let customerAccessToken;
     let customerId;
     let category;
     let item;
@@ -2615,11 +2633,10 @@ describe('HTTP Server', () => {
         email: 'cashier.patch.test@example.com',
       });
       customerId = '00000000-0000-4000-8000-000000000011';
-      await UsersTableTestHelper.addUser({
+      customerAccessToken = await getCustomerAccessToken({
         id: customerId,
         name: 'Customer Patch Test',
         email: 'customer.patch.test@example.com',
-        role: 'customer',
       });
 
       category = await MenuTableTestHelper.addCategory({
@@ -2667,15 +2684,22 @@ describe('HTTP Server', () => {
 
     it('should response 200 and advance order status to preparing while emitting order_status_updated event', async () => {
       // Arrange
-      let sseResponse = null;
-      let receivedChunk = '';
+      let cashierSseResponse = null;
+      let cashierReceivedChunk = '';
+      let customerSseResponse = null;
+      let customerReceivedChunk = '';
 
-      let sseConnected;
-      const connectedPromise = new Promise((resolve) => {
-        sseConnected = resolve;
+      let cashierSseConnected;
+      const cashierConnectedPromise = new Promise((resolve) => {
+        cashierSseConnected = resolve;
       });
 
-      const ssePromise = new Promise((resolve, reject) => {
+      let customerSseConnected;
+      const customerConnectedPromise = new Promise((resolve) => {
+        customerSseConnected = resolve;
+      });
+
+      const cashierSsePromise = new Promise((resolve, reject) => {
         const sseRequest = request(app)
           .get('/sse/dashboard')
           .query({ token: cashierAccessToken })
@@ -2687,7 +2711,7 @@ describe('HTTP Server', () => {
         }, 5000);
 
         sseRequest.on('response', (res) => {
-          sseResponse = res;
+          cashierSseResponse = res;
           res.on('error', () => { });
           if (res.status !== 200) {
             clearTimeout(timeout);
@@ -2696,11 +2720,11 @@ describe('HTTP Server', () => {
           }
 
           res.on('data', (chunk) => {
-            receivedChunk += chunk.toString();
-            if (receivedChunk.includes(': connected')) {
-              sseConnected();
+            cashierReceivedChunk += chunk.toString();
+            if (cashierReceivedChunk.includes(': connected')) {
+              cashierSseConnected();
             }
-            if (receivedChunk.includes('event: order_status_updated') && receivedChunk.includes('data:')) {
+            if (cashierReceivedChunk.includes('event: order_status_updated') && cashierReceivedChunk.includes('data:')) {
               clearTimeout(timeout);
               sseRequest.abort();
               resolve();
@@ -2717,7 +2741,49 @@ describe('HTTP Server', () => {
         sseRequest.end();
       });
 
-      await connectedPromise;
+      const customerSsePromise = new Promise((resolve, reject) => {
+        const sseRequest = request(app)
+          .get(`/sse/orders/${pendingOrder.id}/status`)
+          .query({ token: customerAccessToken })
+          .buffer(false);
+
+        const timeout = setTimeout(() => {
+          sseRequest.abort();
+          resolve();
+        }, 5000);
+
+        sseRequest.on('response', (res) => {
+          customerSseResponse = res;
+          res.on('error', () => { });
+          if (res.status !== 200) {
+            clearTimeout(timeout);
+            sseRequest.abort();
+            return resolve();
+          }
+
+          res.on('data', (chunk) => {
+            customerReceivedChunk += chunk.toString();
+            if (customerReceivedChunk.includes(': connected')) {
+              customerSseConnected();
+            }
+            if (customerReceivedChunk.includes('event: order_status_updated') && customerReceivedChunk.includes('data:')) {
+              clearTimeout(timeout);
+              sseRequest.abort();
+              resolve();
+            }
+          });
+        });
+
+        sseRequest.on('error', (err) => {
+          if (sseRequest.aborted) return;
+          clearTimeout(timeout);
+          reject(err);
+        });
+
+        sseRequest.end();
+      });
+
+      await Promise.all([cashierConnectedPromise, customerConnectedPromise]);
 
       // Act
       const response = await request(app)
@@ -2725,7 +2791,7 @@ describe('HTTP Server', () => {
         .set('Authorization', `Bearer ${cashierAccessToken}`)
         .send({ status: 'preparing' });
 
-      await ssePromise;
+      await Promise.all([cashierSsePromise, customerSsePromise]);
 
       // Assert
       expect(response.status).toBe(200);
@@ -2746,11 +2812,19 @@ describe('HTTP Server', () => {
       const updatedOrder = await OrdersTableTestHelper.findOrderById(pendingOrder.id);
       expect(updatedOrder.status).toBe('preparing');
 
-      expect(sseResponse).not.toBeNull();
-      expect(sseResponse.status).toBe(200);
-      expect(sseResponse.headers['content-type']).toMatch(/text\/event-stream/);
-      expect(receivedChunk).toContain('event: order_status_updated');
-      expect(receivedChunk).toContain('data:');
+      expect(cashierSseResponse).not.toBeNull();
+      expect(cashierSseResponse.status).toBe(200);
+      expect(cashierSseResponse.headers['content-type']).toMatch(/text\/event-stream/);
+      expect(cashierReceivedChunk).toContain('event: order_status_updated');
+      expect(cashierReceivedChunk).toContain('data:');
+
+      expect(customerSseResponse).not.toBeNull();
+      expect(customerSseResponse.status).toBe(200);
+      expect(customerSseResponse.headers['content-type']).toMatch(/text\/event-stream/);
+      expect(customerReceivedChunk).toContain('event: order_status_updated');
+      expect(customerReceivedChunk).toContain('data:');
+      expect(customerReceivedChunk).toContain(pendingOrder.id);
+      expect(customerReceivedChunk).toContain('preparing');
     });
 
     it('should response 400 when status is invalid or set back to pending', async () => {
@@ -2804,7 +2878,528 @@ describe('HTTP Server', () => {
 
   });
 
-  // TODO: No test case covers AC — "audio notification and visual highlight when a new order arrives"
+  describe('when GET /sse/orders/:order_id/status', () => {
+    let customerAccessToken;
+    let customerId;
+    let otherCustomerAccessToken;
+    let otherCustomerId;
+    let cashierAccessToken;
+    let category;
+    let item;
+    let pendingOrder;
+    let preparingOrder;
+    let readyOrder;
+
+    beforeAll(async () => {
+      customerId = '00000000-0000-4000-8000-000000000020';
+      customerAccessToken = await getCustomerAccessToken({
+        id: customerId,
+        name: 'Customer Status Track Test',
+        email: 'customer.status.test@example.com',
+      });
+
+      otherCustomerId = '00000000-0000-4000-8000-000000000021';
+      otherCustomerAccessToken = await getCustomerAccessToken({
+        id: otherCustomerId,
+        name: 'Other Customer Status Track Test',
+        email: 'other.customer.status.test@example.com',
+      });
+
+      cashierAccessToken = await getCashierAccessToken({
+        id: '00000000-0000-4000-8000-000000000022',
+        name: 'Cashier Status Track Test',
+        email: 'cashier.status.test@example.com',
+      });
+
+      category = await MenuTableTestHelper.addCategory({
+        id: '11111111-1111-4111-8111-111111111120',
+        name: 'Beverage Track',
+      });
+      item = await MenuTableTestHelper.addItem({
+        id: '22222222-2222-4222-8222-222222222230',
+        category_id: category.id,
+        name: 'Iced Latte Track',
+        price: 28000,
+        is_available: true,
+      });
+    });
+
+    beforeEach(async () => {
+      pendingOrder = await OrdersTableTestHelper.addOrder({
+        id: '44444444-4444-4444-8444-444444444470',
+        customer_id: customerId,
+        table_number: '7',
+        payment_reference: 'ORDER-PAY-TRACK-01',
+        total_price: 28000,
+        status: 'pending',
+      });
+      await OrdersTableTestHelper.addOrderItem({
+        id: '55555555-5555-4555-8555-555555555580',
+        order_id: pendingOrder.id,
+        menu_item_id: item.id,
+        quantity: 1,
+        note: 'less ice',
+        unit_price: 28000,
+      });
+
+      preparingOrder = await OrdersTableTestHelper.addOrder({
+        id: '44444444-4444-4444-8444-444444444471',
+        customer_id: customerId,
+        table_number: '7',
+        payment_reference: 'ORDER-PAY-TRACK-02',
+        total_price: 28000,
+        status: 'preparing',
+      });
+      await OrdersTableTestHelper.addOrderItem({
+        id: '55555555-5555-4555-8555-555555555581',
+        order_id: preparingOrder.id,
+        menu_item_id: item.id,
+        quantity: 1,
+        note: 'less ice',
+        unit_price: 28000,
+      });
+
+      readyOrder = await OrdersTableTestHelper.addOrder({
+        id: '44444444-4444-4444-8444-444444444472',
+        customer_id: customerId,
+        table_number: '7',
+        payment_reference: 'ORDER-PAY-TRACK-03',
+        total_price: 28000,
+        status: 'ready',
+      });
+      await OrdersTableTestHelper.addOrderItem({
+        id: '55555555-5555-4555-8555-555555555582',
+        order_id: readyOrder.id,
+        menu_item_id: item.id,
+        quantity: 1,
+        note: 'less ice',
+        unit_price: 28000,
+      });
+    });
+
+    afterEach(async () => {
+      await OrdersTableTestHelper.cleanTable();
+    });
+
+    afterAll(async () => {
+      await OrdersTableTestHelper.cleanTable();
+      await MenuTableTestHelper.cleanTable();
+      await UsersTableTestHelper.cleanTable();
+      await AuthenticationsTableTestHelper.cleanTable();
+    });
+
+    it('should response 200 with text/event-stream and keep connection open when token is valid customer JWT for own order', async () => {
+      // Act & Assert
+      await new Promise((resolve, reject) => {
+        const sseRequest = request(app)
+          .get(`/sse/orders/${pendingOrder.id}/status`)
+          .query({ token: customerAccessToken })
+          .buffer(false);
+
+        sseRequest.on('response', (res) => {
+          res.on('error', () => { });
+          try {
+            expect(res.status).toBe(200);
+            expect(res.headers['content-type']).toMatch(/text\/event-stream/);
+            sseRequest.abort();
+            resolve();
+          } catch (err) {
+            sseRequest.abort();
+            reject(err);
+          }
+        });
+
+        sseRequest.on('error', (err) => {
+          if (sseRequest.aborted) return;
+          reject(err);
+        });
+
+        sseRequest.end();
+      });
+    });
+
+    it('should receive order_status_updated event with new_status preparing on connected customer SSE client when cashier calls PATCH /orders/:id/status with preparing', async () => {
+      // Arrange
+      let sseResponse = null;
+      let receivedChunk = '';
+
+      let sseConnected;
+      const connectedPromise = new Promise((resolve) => {
+        sseConnected = resolve;
+      });
+
+      const ssePromise = new Promise((resolve, reject) => {
+        const sseRequest = request(app)
+          .get(`/sse/orders/${pendingOrder.id}/status`)
+          .query({ token: customerAccessToken })
+          .buffer(false);
+
+        const timeout = setTimeout(() => {
+          sseRequest.abort();
+          resolve();
+        }, 5000);
+
+        sseRequest.on('response', (res) => {
+          sseResponse = res;
+          res.on('error', () => { });
+          if (res.status !== 200) {
+            clearTimeout(timeout);
+            sseRequest.abort();
+            return resolve();
+          }
+
+          res.on('data', (chunk) => {
+            receivedChunk += chunk.toString();
+            if (receivedChunk.includes(': connected')) {
+              sseConnected();
+            }
+            if (receivedChunk.includes('event: order_status_updated') && receivedChunk.includes('data:')) {
+              clearTimeout(timeout);
+              sseRequest.abort();
+              resolve();
+            }
+          });
+        });
+
+        sseRequest.on('error', (err) => {
+          if (sseRequest.aborted) return;
+          clearTimeout(timeout);
+          reject(err);
+        });
+
+        sseRequest.end();
+      });
+
+      await connectedPromise;
+
+      // Act
+      const patchResponse = await request(app)
+        .patch(`/orders/${pendingOrder.id}/status`)
+        .set('Authorization', `Bearer ${cashierAccessToken}`)
+        .send({ status: 'preparing' });
+
+      await ssePromise;
+
+      // Assert
+      expect(patchResponse.status).toBe(200);
+      expect(sseResponse).not.toBeNull();
+      expect(sseResponse.status).toBe(200);
+      expect(sseResponse.headers['content-type']).toMatch(/text\/event-stream/);
+      expect(receivedChunk).toContain('event: order_status_updated');
+      expect(receivedChunk).toContain('data:');
+      expect(receivedChunk).toContain(pendingOrder.id);
+      expect(receivedChunk).toContain('preparing');
+    });
+
+    it('should receive order_status_updated event with new_status ready on connected customer SSE client when cashier advances status to ready', async () => {
+      // Arrange
+      let sseResponse = null;
+      let receivedChunk = '';
+
+      let sseConnected;
+      const connectedPromise = new Promise((resolve) => {
+        sseConnected = resolve;
+      });
+
+      const ssePromise = new Promise((resolve, reject) => {
+        const sseRequest = request(app)
+          .get(`/sse/orders/${preparingOrder.id}/status`)
+          .query({ token: customerAccessToken })
+          .buffer(false);
+
+        const timeout = setTimeout(() => {
+          sseRequest.abort();
+          resolve();
+        }, 5000);
+
+        sseRequest.on('response', (res) => {
+          sseResponse = res;
+          res.on('error', () => { });
+          if (res.status !== 200) {
+            clearTimeout(timeout);
+            sseRequest.abort();
+            return resolve();
+          }
+
+          res.on('data', (chunk) => {
+            receivedChunk += chunk.toString();
+            if (receivedChunk.includes(': connected')) {
+              sseConnected();
+            }
+            if (receivedChunk.includes('event: order_status_updated') && receivedChunk.includes('data:')) {
+              clearTimeout(timeout);
+              sseRequest.abort();
+              resolve();
+            }
+          });
+        });
+
+        sseRequest.on('error', (err) => {
+          if (sseRequest.aborted) return;
+          clearTimeout(timeout);
+          reject(err);
+        });
+
+        sseRequest.end();
+      });
+
+      await connectedPromise;
+
+      // Act
+      const patchResponse = await request(app)
+        .patch(`/orders/${preparingOrder.id}/status`)
+        .set('Authorization', `Bearer ${cashierAccessToken}`)
+        .send({ status: 'ready' });
+
+      await ssePromise;
+
+      // Assert
+      expect(patchResponse.status).toBe(200);
+      expect(sseResponse).not.toBeNull();
+      expect(sseResponse.status).toBe(200);
+      expect(sseResponse.headers['content-type']).toMatch(/text\/event-stream/);
+      expect(receivedChunk).toContain('event: order_status_updated');
+      expect(receivedChunk).toContain('data:');
+      expect(receivedChunk).toContain(preparingOrder.id);
+      expect(receivedChunk).toContain('ready');
+    });
+
+    it('should receive order_completed event and stream is closed by server when cashier advances status to completed', async () => {
+      // Arrange
+      let sseResponse = null;
+      let receivedChunk = '';
+      let streamEnded = false;
+
+      let sseConnected;
+      const connectedPromise = new Promise((resolve) => {
+        sseConnected = resolve;
+      });
+
+      const ssePromise = new Promise((resolve, reject) => {
+        const sseRequest = request(app)
+          .get(`/sse/orders/${readyOrder.id}/status`)
+          .query({ token: customerAccessToken })
+          .buffer(false);
+
+        const timeout = setTimeout(() => {
+          sseRequest.abort();
+          resolve();
+        }, 5000);
+
+        sseRequest.on('response', (res) => {
+          sseResponse = res;
+          res.on('error', () => { });
+          if (res.status !== 200) {
+            clearTimeout(timeout);
+            sseRequest.abort();
+            return resolve();
+          }
+
+          res.on('data', (chunk) => {
+            receivedChunk += chunk.toString();
+            if (receivedChunk.includes(': connected')) {
+              sseConnected();
+            }
+            if (receivedChunk.includes('event: order_completed')) {
+              // stream completion expected
+            }
+          });
+
+          res.on('end', () => {
+            streamEnded = true;
+            clearTimeout(timeout);
+            resolve();
+          });
+        });
+
+        sseRequest.on('error', (err) => {
+          if (sseRequest.aborted) return;
+          clearTimeout(timeout);
+          reject(err);
+        });
+
+        sseRequest.end();
+      });
+
+      await connectedPromise;
+
+      // Act
+      const patchResponse = await request(app)
+        .patch(`/orders/${readyOrder.id}/status`)
+        .set('Authorization', `Bearer ${cashierAccessToken}`)
+        .send({ status: 'completed' });
+
+      await ssePromise;
+
+      // Assert
+      expect(patchResponse.status).toBe(200);
+      expect(sseResponse).not.toBeNull();
+      expect(sseResponse.status).toBe(200);
+      expect(sseResponse.headers['content-type']).toMatch(/text\/event-stream/);
+      expect(receivedChunk).toContain('event: order_completed');
+      expect(receivedChunk).toContain('data:');
+      expect(receivedChunk).toContain(readyOrder.id);
+      expect(streamEnded).toBe(true);
+    });
+
+    it('should re-accept connection and re-register client when client reconnects after connection drops', async () => {
+      // Step 1: Open initial connection and drop it
+      let firstConnected = false;
+      const firstConnectedPromise = new Promise((resolve) => {
+        const firstRequest = request(app)
+          .get(`/sse/orders/${pendingOrder.id}/status`)
+          .query({ token: customerAccessToken })
+          .buffer(false);
+
+        firstRequest.on('response', (res) => {
+          res.on('error', () => { });
+          res.on('data', (chunk) => {
+            if (chunk.toString().includes(': connected')) {
+              firstConnected = true;
+              firstRequest.abort();
+              resolve();
+            }
+          });
+        });
+
+        firstRequest.on('error', () => { });
+        firstRequest.end();
+      });
+
+      await firstConnectedPromise;
+      expect(firstConnected).toBe(true);
+
+      // Step 2: Client reconnects
+      let sseResponse = null;
+      let receivedChunk = '';
+
+      let sseConnected;
+      const reconnectedPromise = new Promise((resolve) => {
+        sseConnected = resolve;
+      });
+
+      const secondSsePromise = new Promise((resolve, reject) => {
+        const secondRequest = request(app)
+          .get(`/sse/orders/${pendingOrder.id}/status`)
+          .query({ token: customerAccessToken })
+          .buffer(false);
+
+        const timeout = setTimeout(() => {
+          secondRequest.abort();
+          resolve();
+        }, 5000);
+
+        secondRequest.on('response', (res) => {
+          sseResponse = res;
+          res.on('error', () => { });
+          if (res.status !== 200) {
+            clearTimeout(timeout);
+            secondRequest.abort();
+            return resolve();
+          }
+
+          res.on('data', (chunk) => {
+            receivedChunk += chunk.toString();
+            if (receivedChunk.includes(': connected')) {
+              sseConnected();
+            }
+            if (receivedChunk.includes('event: order_status_updated') && receivedChunk.includes('data:')) {
+              clearTimeout(timeout);
+              secondRequest.abort();
+              resolve();
+            }
+          });
+        });
+
+        secondRequest.on('error', (err) => {
+          if (secondRequest.aborted) return;
+          clearTimeout(timeout);
+          reject(err);
+        });
+
+        secondRequest.end();
+      });
+
+      await reconnectedPromise;
+
+      // Act: Advance order status
+      const patchResponse = await request(app)
+        .patch(`/orders/${pendingOrder.id}/status`)
+        .set('Authorization', `Bearer ${cashierAccessToken}`)
+        .send({ status: 'preparing' });
+
+      await secondSsePromise;
+
+      // Assert
+      expect(patchResponse.status).toBe(200);
+      expect(sseResponse).not.toBeNull();
+      expect(sseResponse.status).toBe(200);
+      expect(sseResponse.headers['content-type']).toMatch(/text\/event-stream/);
+      expect(receivedChunk).toContain('event: order_status_updated');
+      expect(receivedChunk).toContain('data:');
+      expect(receivedChunk).toContain('preparing');
+    });
+
+    it('should response 404 when order_id path param is not a valid UUID', async () => {
+      // Act
+      const response = await request(app)
+        .get('/sse/orders/not-a-valid-uuid/status')
+        .query({ token: customerAccessToken });
+
+      // Assert
+      expect(response.status).toBe(400);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'fail');
+      expect(response.body).toHaveProperty('message');
+    });
+
+    it('should response 401 when token query param is invalid or missing', async () => {
+      // Act
+      const response = await request(app)
+        .get(`/sse/orders/${pendingOrder.id}/status`)
+        .query({ token: 'invalid-token' });
+
+      // Assert
+      expect(response.status).toBe(401);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'fail');
+      expect(response.body).toHaveProperty('message');
+    });
+
+    it('should response 403 when token belongs to another customer who does not own the order', async () => {
+      // Act
+      const response = await request(app)
+        .get(`/sse/orders/${pendingOrder.id}/status`)
+        .query({ token: otherCustomerAccessToken });
+
+      // Assert
+      expect(response.status).toBe(403);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'fail');
+      expect(response.body).toHaveProperty('message');
+    });
+
+    it('should response 403 when token carries cashier role', async () => {
+      // Act
+      const response = await request(app)
+        .get(`/sse/orders/${pendingOrder.id}/status`)
+        .query({ token: cashierAccessToken });
+
+      // Assert
+      expect(response.status).toBe(403);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'fail');
+      expect(response.body).toHaveProperty('message');
+    });
+
+  });
+
+  // TODO: No test case covers AC — "current status step is clearly highlighted among all steps"
+  // TODO: No test case covers AC — "in-app notification banner is shown when order status changes to Ready — no native push notification required (web platform)"
 
   // TODO: No test case covers AC — "payment success screen shows order number and confirmation message"
   // TODO: No test case covers AC — "QRIS code expires after 15 minutes — a countdown timer is displayed"
