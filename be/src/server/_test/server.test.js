@@ -88,7 +88,7 @@ describe('HTTP Server', () => {
     email = 'cashier.dashboard.test@example.com',
     password = 'password123',
   } = {}) => {
-    const hashedPassword = await bcrypt.hash(password, 12);
+    const hashedPassword = await bcrypt.hash(password, 10);
     await UsersTableTestHelper.addUser({
       id,
       name,
@@ -245,7 +245,7 @@ describe('HTTP Server', () => {
     const plainPassword = 'validPassword123';
 
     beforeAll(async () => {
-      const hashedPassword = await bcrypt.hash(plainPassword, 12);
+      const hashedPassword = await bcrypt.hash(plainPassword, 10);
       user = await UsersTableTestHelper.addUser({
         email: 'login.success@example.com',
         password: hashedPassword,

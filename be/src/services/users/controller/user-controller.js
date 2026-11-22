@@ -13,7 +13,7 @@ export const register = async (req, res) => {
     return response(res, 409, 'Email already registered', null);
   }
 
-  const hashedPassword = await bcrypt.hash(password, 12);
+  const hashedPassword = await bcrypt.hash(password, 10);
   const user = await userRepositories.createUser(name, email, hashedPassword);
 
   const accessToken = TokenManager.generateAccessToken({
