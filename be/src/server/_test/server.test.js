@@ -3398,11 +3398,200 @@ describe('HTTP Server', () => {
 
   });
 
+  describe('when GET /orders/history', () => {
+    // NOTE (TDD): OrdersTableTestHelper is at tests/OrdersTableTestHelper.js
+    // It needs: addOrder(), cleanTable()
+    let customerAccessToken;
+    let customerId;
+    let emptyCustomerAccessToken;
+    let emptyCustomerId;
+    let cashierAccessToken;
+    let otherCustomerOrder;
+    const seededOrders = [];
+
+    beforeAll(async () => {
+      customerId = '00000000-0000-4000-8000-000000000071';
+      customerAccessToken = await getCustomerAccessToken({
+        id: customerId,
+        name: 'Order History Customer',
+        email: 'history.customer@example.com',
+      });
+
+      emptyCustomerId = '00000000-0000-4000-8000-000000000072';
+      emptyCustomerAccessToken = await getCustomerAccessToken({
+        id: emptyCustomerId,
+        name: 'Empty History Customer',
+        email: 'empty.customer@example.com',
+      });
+
+      cashierAccessToken = await getCashierAccessToken({
+        id: '00000000-0000-4000-8000-000000000073',
+        name: 'Cashier History Test',
+        email: 'cashier.history@example.com',
+      });
+
+      const otherCustomerId = '00000000-0000-4000-8000-000000000074';
+      await UsersTableTestHelper.addUser({
+        id: otherCustomerId,
+        name: 'Other Customer',
+        email: 'other.customer.history@example.com',
+        role: 'customer',
+      });
+
+      otherCustomerOrder = await OrdersTableTestHelper.addOrder({
+        id: '44444444-4444-4444-8444-444444444470',
+        customer_id: otherCustomerId,
+        table_number: '1',
+        payment_reference: 'ORDER-HIST-OTHER-001',
+        total_price: 25000,
+        status: 'completed',
+      });
+
+      // Seed 7 orders for customerId to test sorting and pagination (page=2, limit=5)
+      for (let i = 1; i <= 7; i++) {
+        const order = await OrdersTableTestHelper.addOrder({
+          id: `44444444-4444-4444-8444-44444444447${i}`,
+          customer_id: customerId,
+          table_number: `${i}`,
+          payment_reference: `ORDER-HIST-00${i}`,
+          total_price: 20000 * i,
+          status: i % 2 === 0 ? 'completed' : 'preparing',
+        });
+        seededOrders.push(order);
+      }
+    });
+
+    afterAll(async () => {
+      await OrdersTableTestHelper.cleanTable();
+      await UsersTableTestHelper.cleanTable();
+      await AuthenticationsTableTestHelper.cleanTable();
+    });
+
+    it('should response 200 with orders sorted most recent first and correct schema when accessed with valid customer token', async () => {
+      // Act
+      const response = await request(app)
+        .get('/orders/history')
+        .set('Authorization', `Bearer ${customerAccessToken}`);
+
+      // Assert
+      expect(response.status).toBe(200);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'success');
+      expect(response.body).toHaveProperty('data');
+      expect(Array.isArray(response.body.data)).toBe(true);
+      expect(response.body).toHaveProperty('total', 7);
+      expect(response.body).toHaveProperty('page', 1);
+      expect(response.body).toHaveProperty('limit', 20);
+      expect(response.body.data.length).toBe(7);
+
+      response.body.data.forEach((order) => {
+        expect(order).toHaveProperty('id');
+        expect(order).toHaveProperty('created_at');
+        expect(order).toHaveProperty('total_price');
+        expect(order).toHaveProperty('status');
+      });
+
+      // Verify sorting: created_at descending (most recent first)
+      const timestamps = response.body.data.map((o) => new Date(o.created_at).getTime());
+      for (let i = 0; i < timestamps.length - 1; i++) {
+        expect(timestamps[i]).toBeGreaterThanOrEqual(timestamps[i + 1]);
+      }
+
+      // Verify customer boundary: does not contain orders from other customers
+      const returnedIds = response.body.data.map((o) => o.id);
+      expect(returnedIds).not.toContain(otherCustomerOrder.id);
+    });
+
+    it('should response 200 with empty data array and total 0 when customer has no past orders', async () => {
+      // Act
+      const response = await request(app)
+        .get('/orders/history')
+        .set('Authorization', `Bearer ${emptyCustomerAccessToken}`);
+
+      // Assert
+      expect(response.status).toBe(200);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'success');
+      expect(Array.isArray(response.body.data)).toBe(true);
+      expect(response.body.data).toHaveLength(0);
+      expect(response.body).toHaveProperty('total', 0);
+    });
+
+    it('should response 401 when Authorization header is missing', async () => {
+      // Act
+      const response = await request(app)
+        .get('/orders/history');
+
+      // Assert
+      expect(response.status).toBe(401);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'fail');
+      expect(response.body).toHaveProperty('message');
+    });
+
+    it('should response 403 when accessed with cashier token', async () => {
+      // Act
+      const response = await request(app)
+        .get('/orders/history')
+        .set('Authorization', `Bearer ${cashierAccessToken}`);
+
+      // Assert
+      expect(response.status).toBe(403);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'fail');
+      expect(response.body).toHaveProperty('message');
+    });
+
+    it('should response 200 with second page of results when page and limit query parameters are provided', async () => {
+      // Act
+      const response = await request(app)
+        .get('/orders/history')
+        .query({ page: 2, limit: 5 })
+        .set('Authorization', `Bearer ${customerAccessToken}`);
+
+      // Assert
+      expect(response.status).toBe(200);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'success');
+      expect(Array.isArray(response.body.data)).toBe(true);
+      expect(response.body).toHaveProperty('page', 2);
+      expect(response.body).toHaveProperty('limit', 5);
+      expect(response.body).toHaveProperty('total', 7);
+      expect(response.body.data).toHaveLength(2);
+    });
+
+    it('should response 400 when pagination query parameter is invalid', async () => {
+      // Act
+      const response = await request(app)
+        .get('/orders/history')
+        .query({ page: 'abc' })
+        .set('Authorization', `Bearer ${customerAccessToken}`);
+
+      // Assert
+      expect(response.status).toBe(400);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
+      expect(response.body).toBeTypeOf('object');
+      expect(response.body).toHaveProperty('status', 'fail');
+      expect(response.body).toHaveProperty('message');
+    });
+
+  });
+
   // TODO: No test case covers AC — "current status step is clearly highlighted among all steps"
   // TODO: No test case covers AC — "in-app notification banner is shown when order status changes to Ready — no native push notification required (web platform)"
 
   // TODO: No test case covers AC — "payment success screen shows order number and confirmation message"
   // TODO: No test case covers AC — "QRIS code expires after 15 minutes — a countdown timer is displayed"
   // TODO: No test case covers AC — "cart is not cleared after a payment timeout — customer can retry from the same cart"
+
+  // TODO: No test case covers AC — "can reorder a past order — items added to new cart with same quantities and notes"
+  // TODO: No test case covers AC — "reorder skips items that are no longer available and notifies the customer"
+  // TODO: No test case covers AC — "if reorder includes items that are unavailable, a confirmation dialog is shown before the cart is created, listing skipped items"
+  // TODO: No test case covers AC — "reorder uses current item prices, not historical prices"
 
 });
