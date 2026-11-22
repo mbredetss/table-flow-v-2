@@ -95,6 +95,25 @@ class OrderRepositories {
     return result.rows;
   }
 
+  async getCustomerHistory(customerId, page, limit) {
+    const offset = (page - 1) * limit;
+
+    const countQuery = 'SELECT COUNT(id)::int AS total FROM orders WHERE customer_id = $1';
+    const countResult = await this.pool.query(countQuery, [customerId]);
+    const total = countResult.rows[0].total;
+
+    const dataQuery = `
+      SELECT id, created_at, total_price, status
+      FROM orders
+      WHERE customer_id = $1
+      ORDER BY created_at DESC
+      LIMIT $2 OFFSET $3
+    `;
+    const dataResult = await this.pool.query(dataQuery, [customerId, limit, offset]);
+
+    return { data: dataResult.rows, total };
+  }
+
   async updateOrderStatus(id, status) {
     const query = `
       UPDATE orders

@@ -103,6 +103,21 @@ export const getOrderById = async (req, res) => {
   return response(res, 200, null, order);
 };
 
+export const getOrderHistory = async (req, res) => {
+  const customer_id = req.user.id;
+  const { page, limit } = req.validatedQuery;
+
+  const { data, total } = await orderRepositories.getCustomerHistory(customer_id, page, limit);
+
+  return res.status(200).json({
+    status: 'success',
+    data,
+    total,
+    page,
+    limit,
+  });
+};
+
 export const getActiveOrders = async (req, res) => {
   const orders = await orderRepositories.getActiveOrders();
   const grouped = {
