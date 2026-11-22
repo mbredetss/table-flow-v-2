@@ -71,7 +71,7 @@ class MenuRepositories {
       index++;
     }
 
-    fields.push(`updated_at = now()`);
+    fields.push('updated_at = now()');
     values.push(id);
 
     const query = `

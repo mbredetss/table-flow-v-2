@@ -1,8 +1,8 @@
 import express from 'express';
 import validate from '../../../middlewares/validate.js';
 import authenticate from '../../../middlewares/authenticate.js';
-import { initiatePayment, handleWebhook, getPaymentStatus } from '../controller/payment-controller.js';
-import { initiatePaymentSchema, webhookPaymentSchema } from '../validator/schema.js';
+import { handleWebhook, getPaymentStatus } from '../controller/payment-controller.js';
+import { webhookPaymentSchema } from '../validator/schema.js';
 
 const router = express.Router();
 

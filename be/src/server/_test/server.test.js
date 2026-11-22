@@ -4,10 +4,8 @@ import path from 'path';
 import request from 'supertest';
 import bcrypt from 'bcrypt';
 import crypto from 'crypto';
-import jwt from 'jsonwebtoken';
 import { vi } from 'vitest';
 import app from '../index.js';
-import authenticate from '../../middlewares/authenticate.js';
 import UsersTableTestHelper from '../../../tests/UsersTableTestHelper.js';
 import AuthenticationsTableTestHelper from '../../../tests/AuthenticationsTableTestHelper.js';
 import MenuTableTestHelper from '../../../tests/MenuTableTestHelper.js';
@@ -2452,7 +2450,7 @@ describe('HTTP Server', () => {
       await AuthenticationsTableTestHelper.cleanTable();
     });
 
-    const serverKey = process.env.MIDTRANS_SERVER_KEY
+    const serverKey = process.env.MIDTRANS_SERVER_KEY;
     const generateSignature = (orderId, statusCode, grossAmount) => {
       return crypto
         .createHash('sha512')

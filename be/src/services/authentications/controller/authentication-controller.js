@@ -53,7 +53,7 @@ export const refreshToken = async (req, res) => {
   if (new Date(record.expires_at) < new Date()) return response(res, 401, 'Refresh token expired', null);
 
   const user = await userRepositories.findById(record.user_id);
-  
+
   if (!user) return response(res, 401, 'User no longer exists', null);
 
   const accessToken = TokenManager.generateAccessToken({

@@ -1,5 +1,4 @@
 import { Pool } from 'pg';
-import bcrypt from 'bcrypt';
 
 class UserRepositories {
   constructor() {

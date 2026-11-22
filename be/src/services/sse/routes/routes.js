@@ -10,7 +10,7 @@ import validateParams from '../../../middlewares/validateParams.js';
 
 const router = express.Router();
 
-router.get('/dashboard', authenticateSse,authorize('cashier', 'admin'), subscribeDashboardSse);
+router.get('/dashboard', authenticateSse, authorize('cashier', 'admin'), subscribeDashboardSse);
 router.get('/orders/:order_id/status', authenticateSse, authorize('customer'), validateParams(orderStatusParamsSchema), subscribeOrderStatusSse);
 
 export default router;
