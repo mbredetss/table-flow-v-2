@@ -18,7 +18,7 @@ const storage = multer.diskStorage({
 });
 
 const fileFilter = (req, file, cb) => {
-  const allowedMimes = ['image/jpeg', 'image/png', 'image/jpg'];
+  const allowedMimes = ['image/jpeg', 'image/png', 'image/jpg', 'image/jfif'];
   if (!allowedMimes.includes(file.mimetype)) {
     const error = new Error('Invalid file type. Only JPEG and PNG are allowed.');
     error.status = 400;
