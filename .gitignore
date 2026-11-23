@@ -4,4 +4,6 @@ be/node_modules/
 be/.env
 be/.test.env
 table-flow.excalidraw
-fe/DESIGN.md
+fe/DESIGN.MD
+fe/node_modules
+fe/.angular

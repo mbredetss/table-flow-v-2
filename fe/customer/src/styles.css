@@ -1,0 +1,121 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-canvas text-ink;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  }
+}
+
+/* Airbnb Typography Scale Tokens */
+.font-display-xl {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.43;
+  letter-spacing: 0;
+}
+
+.font-display-lg {
+  font-size: 22px;
+  font-weight: 500;
+  line-height: 1.18;
+  letter-spacing: -0.44px;
+}
+
+.font-display-md {
+  font-size: 21px;
+  font-weight: 700;
+  line-height: 1.43;
+  letter-spacing: 0;
+}
+
+.font-display-sm {
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.20;
+  letter-spacing: -0.18px;
+}
+
+.font-title-md {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: 0;
+}
+
+.font-title-sm {
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.25;
+  letter-spacing: 0;
+}
+
+.font-body-md {
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: 0;
+}
+
+.font-body-sm {
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.43;
+  letter-spacing: 0;
+}
+
+.font-caption {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.29;
+  letter-spacing: 0;
+}
+
+.font-caption-sm {
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.23;
+  letter-spacing: 0;
+}
+
+.font-badge {
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.18;
+  letter-spacing: 0;
+}
+
+.font-micro-label {
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.33;
+  letter-spacing: 0;
+}
+
+.font-rating-display {
+  font-size: 64px;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -1px;
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #dddddd;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #c1c1c1;
+}
