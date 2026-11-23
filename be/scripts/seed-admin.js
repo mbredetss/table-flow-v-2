@@ -13,7 +13,7 @@ export const seedAdmin = async (poolInstance) => {
   const password = process.env.ADMIN_PASSWORD;
   const role = 'admin';
 
-  const hashedPassword = await bcrypt.hash(password, 12);
+  const hashedPassword = await bcrypt.hash(password, 10);
 
   const query = {
     text: `INSERT INTO users (name, email, password, role)
@@ -35,7 +35,7 @@ export const seedAdmin = async (poolInstance) => {
   return result.rows[0];
 };
 
-if (process.argv[1] && process.argv[1].replace(/\\/g, '/').endsWith('scripts/seed-admin.js')) {
+if (process.argv[1] && process.argv[1].replace(/\\/g, '/').endsWith('/scripts/seed-admin.js')) {
   seedAdmin()
     .then((user) => {
       console.log('Admin user seeded successfully:', user);
