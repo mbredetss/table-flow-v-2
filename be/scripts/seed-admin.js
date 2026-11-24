@@ -7,7 +7,7 @@ const envFile = process.env.NODE_ENV === 'test' ? '.test.env' : '.env';
 dotenv.config({ path: path.resolve(process.cwd(), envFile) });
 
 export const seedAdmin = async (poolInstance) => {
-  const pool = poolInstance || new Pool();
+  const pool = poolInstance || new Pool({ connectionString: process.env.DATABASE_URL });
   const name = 'admin';
   const email = process.env.ADMIN_EMAIL;
   const password = process.env.ADMIN_PASSWORD;
