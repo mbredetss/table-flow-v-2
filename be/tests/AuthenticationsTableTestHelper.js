@@ -1,6 +1,6 @@
 import { Pool } from 'pg';
 
-const pool = new Pool();
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 const AuthenticationsTableTestHelper = {
   async addRefreshToken(userId, refreshToken, expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)) {

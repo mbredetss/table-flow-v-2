@@ -2,7 +2,7 @@ import { Pool } from 'pg';
 
 class TableRepositories {
   constructor() {
-    this.pool = new Pool();
+    this.pool = new Pool({ connectionString: process.env.DATABASE_URL });
   }
 
   async createTable({ table_number }) {

@@ -2,7 +2,7 @@ import 'dotenv/config'
 import { Pool } from 'pg';
 
 export const seedCategory = async (poolInstance) => {
-    const pool = poolInstance || new Pool();
+    const pool = poolInstance || new Pool({ connectionString: process.env.DATABASE_URL });
 
     const categories = ['Food', 'Drinks', 'Desserts'];
     for (const category of categories) {

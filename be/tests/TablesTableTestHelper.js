@@ -1,6 +1,6 @@
 import { Pool } from 'pg';
 
-const pool = new Pool();
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 const TablesTableTestHelper = {
   async addTable({
