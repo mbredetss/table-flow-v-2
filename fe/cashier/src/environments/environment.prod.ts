@@ -1,4 +1,4 @@
 export const environment = {
   production: true,
-  apiUrl: 'https://api.tableflow.com'
+  apiUrl: 'table-flow-v-2-production.up.railway.app'
 };
