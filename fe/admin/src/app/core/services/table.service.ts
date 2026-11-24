@@ -2,6 +2,7 @@ import { Injectable, inject, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable, tap, map } from 'rxjs';
 import { Table, CreateTableRequest } from '../models/table.model';
+import { environment } from '../../../environments/environment';
 
 interface ApiResponse<T> {
   status: string;
@@ -17,7 +18,7 @@ export class TableService {
   readonly tables = signal<Table[]>([]);
 
   getTables(): Observable<Table[]> {
-    return this.http.get<ApiResponse<Table[]>>('/admin/tables').pipe(
+    return this.http.get<ApiResponse<Table[]>>(`${environment.apiUrl}/admin/tables`).pipe(
       map(res => res.data || []),
       tap(tables => this.tables.set(tables))
     );
@@ -25,7 +26,7 @@ export class TableService {
 
   createTable(tableNumber: string): Observable<Table> {
     const payload: CreateTableRequest = { table_number: tableNumber };
-    return this.http.post<ApiResponse<Table>>('/admin/tables', payload).pipe(
+    return this.http.post<ApiResponse<Table>>(`${environment.apiUrl}/admin/tables`, payload).pipe(
       map(res => res.data),
       tap(newTable => {
         this.tables.update(list => [...list, newTable]);
@@ -34,7 +35,7 @@ export class TableService {
   }
 
   deleteTable(id: string): Observable<void> {
-    return this.http.delete<void>(`/admin/tables/${id}`).pipe(
+    return this.http.delete<void>(`${environment.apiUrl}/admin/tables/${id}`).pipe(
       tap(() => {
         this.tables.update(list => list.filter(t => t.id !== id));
       })
@@ -45,7 +46,7 @@ export class TableService {
    * Downloads the table QR code PNG from the backend endpoint: GET /admin/tables/{id}/qrcode
    */
   downloadQRCode(table: Table): void {
-    this.http.get(`/admin/tables/${table.id}/qrcode`, { responseType: 'blob' }).subscribe({
+    this.http.get(`${environment.apiUrl}/admin/tables/${table.id}/qrcode`, { responseType: 'blob' }).subscribe({
       next: (blob) => {
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');

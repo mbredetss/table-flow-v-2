@@ -5,6 +5,7 @@ import { OrderDetail, OrderStatus } from '../models/order.model';
 import { AuthService } from './auth.service';
 import { AudioService } from './audio.service';
 import { NotificationService } from './notification.service';
+import { environment } from '../../../environments/environment';
 
 interface ActiveOrdersResponse {
   pending?: OrderDetail[];
@@ -38,7 +39,7 @@ export class DashboardService {
   private eventSource: EventSource | null = null;
 
   loadOrders(): Observable<ActiveOrdersResponse> {
-    return this.http.get<ApiResponse<ActiveOrdersResponse>>('/orders').pipe(
+    return this.http.get<ApiResponse<ActiveOrdersResponse>>(`${environment.apiUrl}/orders`).pipe(
       map(res => res.data),
       tap((data) => {
         this.pendingOrders.set(data?.pending || []);
@@ -56,7 +57,7 @@ export class DashboardService {
     const token = this.authService.getToken();
     if (!token) return;
 
-    const sseUrl = `/sse/dashboard?token=${encodeURIComponent(token)}`;
+    const sseUrl = `${environment.apiUrl}/sse/dashboard?token=${encodeURIComponent(token)}`;
 
     try {
       this.eventSource = new EventSource(sseUrl);
@@ -126,7 +127,7 @@ export class DashboardService {
     const nextStatus = nextStatusMap[currentStatus];
     if (!nextStatus) return new Observable(observer => observer.complete());
 
-    return this.http.patch<ApiResponse<OrderDetail>>(`/orders/${orderId}/status`, { status: nextStatus }).pipe(
+    return this.http.patch<ApiResponse<OrderDetail>>(`${environment.apiUrl}/orders/${orderId}/status`, { status: nextStatus }).pipe(
       tap(() => {
         this.moveOrderToStatus(orderId, nextStatus);
       })

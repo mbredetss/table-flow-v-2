@@ -4,6 +4,7 @@ import { Observable, interval, switchMap, takeWhile, tap, map } from 'rxjs';
 import { CreateOrderRequest } from '../models/order.model';
 import { CreateOrderResponse, PaymentStatus, PaymentStatusResponse } from '../models/payment.model';
 import { CartService, CartItem } from './cart.service';
+import { environment } from '../../../environments/environment';
 
 interface ApiResponse<T> {
   status: string;
@@ -113,7 +114,7 @@ export class PaymentService {
   }
 
   createOrder(payload: CreateOrderRequest, totalAmount?: number): Observable<CreateOrderResponse> {
-    return this.http.post<ApiResponse<CreateOrderResponse>>('/orders', payload).pipe(
+    return this.http.post<ApiResponse<CreateOrderResponse>>(`${environment.apiUrl}/orders`, payload).pipe(
       map(res => res.data),
       tap((data) => {
         const total = totalAmount ?? this.cartService.totalPrice();
@@ -221,7 +222,7 @@ export class PaymentService {
   }
 
   checkStatus(paymentId: string): Observable<PaymentStatusResponse> {
-    return this.http.get<ApiResponse<PaymentStatusResponse>>(`/payments/${paymentId}/status`).pipe(
+    return this.http.get<ApiResponse<PaymentStatusResponse>>(`${environment.apiUrl}/payments/${paymentId}/status`).pipe(
       map(res => res.data),
       tap((data) => {
         if (data?.status) {
