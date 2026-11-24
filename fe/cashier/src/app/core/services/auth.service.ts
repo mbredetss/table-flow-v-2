@@ -3,6 +3,7 @@ import { HttpClient } from '@angular/common/http';
 import { Router } from '@angular/router';
 import { Observable, map } from 'rxjs';
 import { User, UserRole, LoginRequest, RegisterRequest } from '../models/auth.model';
+import { environment } from '../../../environments/environment';
 
 const TOKEN_KEY = 'tableflow_access_token';
 const USER_KEY = 'tableflow_user';
@@ -88,7 +89,7 @@ export class AuthService {
   }
 
   login(credentials: LoginRequest): Observable<{ accessToken: string; user: User }> {
-    return this.http.post<any>('/auth/login', credentials, { withCredentials: true }).pipe(
+    return this.http.post<any>(`${environment.apiUrl}/auth/login`, credentials, { withCredentials: true }).pipe(
       map((res: any) => {
         const data = res?.data ?? res;
         const token = data?.accessToken ?? data?.token ?? '';
@@ -113,7 +114,7 @@ export class AuthService {
   }
 
   register(payload: RegisterRequest): Observable<{ accessToken: string; user: User }> {
-    return this.http.post<any>('/users', payload, { withCredentials: true }).pipe(
+    return this.http.post<any>(`${environment.apiUrl}/users`, payload, { withCredentials: true }).pipe(
       map((res: any) => {
         const data = res?.data ?? res;
         const token = data?.accessToken ?? data?.token ?? '';
@@ -137,7 +138,7 @@ export class AuthService {
   }
 
   logout(): void {
-    this.http.delete('/auth/logout', { withCredentials: true }).subscribe({
+    this.http.delete(`${environment.apiUrl}/auth/logout`, { withCredentials: true }).subscribe({
       next: () => this.clearSessionAndRedirect(),
       error: () => this.clearSessionAndRedirect()
     });

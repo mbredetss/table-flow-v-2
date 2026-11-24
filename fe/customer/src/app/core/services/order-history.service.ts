@@ -5,6 +5,7 @@ import { OrderDetail, OrderSummary } from '../models/order.model';
 import { MenuService } from './menu.service';
 import { CartService } from './cart.service';
 import { MenuItem } from '../models/menu.model';
+import { environment } from '../../../environments/environment';
 
 interface HistoryResponse {
   status: string;
@@ -36,7 +37,7 @@ export class OrderHistoryService {
 
   getOrders(page: number = 1, limit: number = 20): Observable<OrderSummary[]> {
     const params = new HttpParams().set('page', page).set('limit', limit);
-    return this.http.get<HistoryResponse>('/orders/history', { params }).pipe(
+    return this.http.get<HistoryResponse>(`${environment.apiUrl}/orders/history`, { params }).pipe(
       map(res => res.data || []),
       tap(orders => {
         this.historyOrders.set(orders);
@@ -45,7 +46,7 @@ export class OrderHistoryService {
   }
 
   getOrderDetail(orderId: string): Observable<OrderDetail> {
-    return this.http.get<ApiResponse<OrderDetail>>(`/orders/${orderId}`).pipe(
+    return this.http.get<ApiResponse<OrderDetail>>(`${environment.apiUrl}/orders/${orderId}`).pipe(
       map(res => res.data)
     );
   }

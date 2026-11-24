@@ -5,6 +5,7 @@ import { OrderDetail, OrderStatus } from '../models/order.model';
 import { AuthService } from './auth.service';
 import { NotificationService } from './notification.service';
 import { AudioService } from './audio.service';
+import { environment } from '../../../environments/environment';
 
 interface ApiResponse<T> {
   status: string;
@@ -26,7 +27,7 @@ export class OrderTrackingService {
   private eventSource: EventSource | null = null;
 
   loadOrder(orderId: string): Observable<OrderDetail> {
-    return this.http.get<ApiResponse<OrderDetail>>(`/orders/${orderId}`).pipe(
+    return this.http.get<ApiResponse<OrderDetail>>(`${environment.apiUrl}/orders/${orderId}`).pipe(
       map(res => res.data),
       tap((order) => {
         this.currentOrder.set(order);
@@ -42,7 +43,7 @@ export class OrderTrackingService {
     const token = this.authService.getToken();
     if (!token) return;
 
-    const sseUrl = `/sse/orders/${orderId}/status?token=${encodeURIComponent(token)}`;
+    const sseUrl = `${environment.apiUrl}/sse/orders/${orderId}/status?token=${encodeURIComponent(token)}`;
 
     try {
       this.eventSource = new EventSource(sseUrl);
