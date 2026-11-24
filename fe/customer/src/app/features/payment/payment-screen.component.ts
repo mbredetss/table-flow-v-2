@@ -26,7 +26,7 @@ import { CreateOrderRequest } from '../../core/models/order.model';
           <div class="my-6 p-4 rounded-md bg-surface-soft border border-hairline inline-block text-left w-full max-w-sm">
             <div class="flex justify-between py-1 border-b border-hairline">
               <span class="font-body-sm text-muted">Table:</span>
-              <span class="font-title-sm font-bold text-ink">Table {{ cartService.tableNumber() }}</span>
+              <span class="font-title-sm font-bold text-ink">Table {{ displayTableNumber() }}</span>
             </div>
             <div class="flex justify-between py-1">
               <span class="font-body-sm text-muted">Status:</span>
@@ -85,9 +85,9 @@ import { CreateOrderRequest } from '../../core/models/order.model';
               <h2 class="font-display-sm text-ink">Scan QRIS with Any E-Wallet</h2>
             </div>
             <div class="text-right">
-              <span class="text-xs text-muted block">Table #{{ cartService.tableNumber() }}</span>
+              <span class="text-xs text-muted block">Table #{{ displayTableNumber() }}</span>
               <span class="font-title-md font-bold text-rausch">
-                Rp {{ cartService.totalPrice().toLocaleString('id-ID') }}
+                Rp {{ displayTotalPrice().toLocaleString('id-ID') }}
               </span>
             </div>
           </div>
@@ -118,7 +118,7 @@ import { CreateOrderRequest } from '../../core/models/order.model';
             </div>
 
             <p class="font-body-sm text-muted max-w-sm">
-              Open your mobile banking or e-wallet app, select <span class="font-semibold text-ink">Scan QRIS</span>, and authorize payment of <span class="font-semibold text-ink">Rp {{ cartService.totalPrice().toLocaleString('id-ID') }}</span>.
+              Open your mobile banking or e-wallet app, select <span class="font-semibold text-ink">Scan QRIS</span>, and authorize payment of <span class="font-semibold text-ink">Rp {{ displayTotalPrice().toLocaleString('id-ID') }}</span>.
             </p>
 
             <!-- Realtime Polling Indicator -->
@@ -137,12 +137,31 @@ export class PaymentScreenComponent implements OnInit, OnDestroy {
   readonly cartService = inject(CartService);
   private router = inject(Router);
 
+  displayTableNumber(): string {
+    return this.paymentService.currentTableNumber() || this.cartService.tableNumber() || '01';
+  }
+
+  displayTotalPrice(): number {
+    const sessionTotal = this.paymentService.currentTotalAmount();
+    return sessionTotal > 0 ? sessionTotal : this.cartService.totalPrice();
+  }
+
   ngOnInit(): void {
+    // 1. Attempt to restore any active ongoing payment session (e.g. from reload or relog)
+    const restored = this.paymentService.restorePaymentSession();
+    if (restored && this.paymentService.currentQrisUrl()) {
+      // Existing pending order restored with its accurate remaining countdown.
+      // Do NOT create a duplicate order.
+      return;
+    }
+
+    // 2. If no active order exists and cart is empty, redirect to menu
     if (this.cartService.isCartEmpty() && this.paymentService.paymentStatus() !== 'paid') {
       this.router.navigate(['/']);
       return;
     }
 
+    // 3. If cart has items and no active order exists yet, generate order & QRIS
     if (!this.paymentService.currentQrisUrl()) {
       this.generateQris();
     }
@@ -160,18 +179,26 @@ export class PaymentScreenComponent implements OnInit, OnDestroy {
   }
 
   generateQris(): void {
-    const tableNumber = this.cartService.tableNumber() || '01';
+    const tableNumber = this.displayTableNumber();
+    const items = this.cartService.items().map(it => ({
+      menu_item_id: it.menuItem.id,
+      quantity: it.quantity,
+      note: it.note
+    }));
+
+    if (items.length === 0) {
+      this.router.navigate(['/']);
+      return;
+    }
+
     const payload: CreateOrderRequest = {
       table_number: tableNumber,
       payment_reference: 'ORDER-PAY-' + Date.now(),
-      items: this.cartService.items().map(it => ({
-        menu_item_id: it.menuItem.id,
-        quantity: it.quantity,
-        note: it.note
-      }))
+      items
     };
 
-    this.paymentService.createOrder(payload).subscribe();
+    const total = this.cartService.totalPrice();
+    this.paymentService.createOrder(payload, total).subscribe();
   }
 
   goToTracking(): void {
@@ -183,4 +210,3 @@ export class PaymentScreenComponent implements OnInit, OnDestroy {
     }
   }
 }
-

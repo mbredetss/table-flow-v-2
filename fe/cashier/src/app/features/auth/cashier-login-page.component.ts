@@ -106,9 +106,10 @@ export class CashierLoginPageComponent {
     this.authService.login({ email: this.email, password: this.password }).subscribe({
       next: (res) => {
         this.loading.set(false);
-        if (res.user.role !== 'cashier' && res.user.role !== 'admin') {
+        const role = (res.user?.role || '').toLowerCase().trim();
+        if (role !== 'cashier' && role !== 'admin') {
           this.authService.logout();
-          this.errorMessage.set('Akses ditolak: Akun ini tidak memiliki hak akses sebagai Kasir atau Staff.');
+          this.errorMessage.set(`Akses ditolak: Akun '${res.user?.email}' memiliki role '${res.user?.role || 'tidak diketahui'}', bukan Kasir atau Staff.`);
           return;
         }
 

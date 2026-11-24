@@ -273,13 +273,13 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
       return;
     }
 
-    // 2. Check session storage for last active order
-    const sessionOrderId = typeof sessionStorage !== 'undefined'
-      ? sessionStorage.getItem('tableflow_active_order_id')
+    // 2. Check storage for last active order (sessionStorage and localStorage fallback)
+    const storedOrderId = typeof window !== 'undefined'
+      ? (sessionStorage.getItem('tableflow_active_order_id') || localStorage.getItem('tableflow_active_order_id'))
       : null;
 
-    if (sessionOrderId) {
-      this.fetchOrder(sessionOrderId);
+    if (storedOrderId) {
+      this.fetchOrder(storedOrderId);
       return;
     }
 
