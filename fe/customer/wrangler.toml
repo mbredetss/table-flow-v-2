@@ -1,0 +1,6 @@
+name = "table-flow-v-2-customer"
+compatibility_date = "2024-01-01"
+
+[assets]
+directory = "./dist/customer/browser"
+not_found_handling = "single-page-application"

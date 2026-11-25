@@ -1,0 +1,6 @@
+name = "table-flow-v-2-cashier"
+compatibility_date = "2024-01-01"
+
+[assets]
+directory = "./dist/cashier/browser"
+not_found_handling = "single-page-application"
