@@ -9,9 +9,9 @@ const app = express();
 
 const corsOptions = {
     origin: [
-        'https://table-flow-v-2.mr-mighdadjaba.workers.dev',
+        'https://table-flow-v-2-cashier.mr-mighdadjaba.workers.dev',
         'https://table-flow-v-2-admin.mr-mighdadjaba.workers.dev',
-        'https://table-flow-v-2-customer.mr-mighdadjaba.workers.dev',
+        'https://table-flow-v-2-customer.mr-mighdadjaba.workers.dev/',
     ],
     credentials: true,
 };
