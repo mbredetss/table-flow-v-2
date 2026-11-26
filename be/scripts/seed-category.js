@@ -1,8 +1,13 @@
 import 'dotenv/config'
+import { text } from 'express';
 import { Pool } from 'pg';
 
 export const seedCategory = async (poolInstance) => {
     const pool = poolInstance || new Pool({ connectionString: process.env.DATABASE_URL });
+
+    await pool.query({
+        text: 'TRUNCATE TABLE menu_items CASCADE', 
+    });
 
     const categories = ['Food', 'Drinks', 'Desserts'];
     for (const category of categories) {
